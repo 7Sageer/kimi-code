@@ -18,6 +18,7 @@ import {
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
+import type { EnabledBootstrap } from '../plugin';
 import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_INIT_PROMPT,
@@ -52,6 +53,7 @@ export interface SessionConfig {
   readonly skills?: SessionSkillConfig;
   readonly mcpConfig?: SessionMcpConfig;
   readonly telemetry?: TelemetryClient | undefined;
+  readonly pluginBootstraps?: readonly EnabledBootstrap[];
 }
 
 export interface SessionSkillConfig {
@@ -414,6 +416,7 @@ export class Session {
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
+      pluginBootstraps: this.config.pluginBootstraps,
     });
   }
 

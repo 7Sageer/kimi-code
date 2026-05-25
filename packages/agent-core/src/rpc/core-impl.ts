@@ -53,6 +53,8 @@ import type { SDKRPC } from './sdk-api';
 import { proxyWithExtraPayload } from './types';
 import type { PromisableMethods } from '#/utils/types';
 
+import { PluginManager } from '#/plugin';
+
 import { resolveSessionMcpConfig } from '../mcp';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { SessionAPIImpl } from '../session/rpc';
@@ -109,6 +111,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private readonly skillDirs: readonly string[];
   private readonly providerManager: ProviderManager;
   private readonly sessionStore: SessionStore;
+  readonly plugins: PluginManager;
+  private pluginsReady: Promise<void>;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
@@ -133,6 +137,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
     });
     this.sessionStore = new SessionStore(this.homeDir);
+    this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
+    this.pluginsReady = this.plugins.load().catch(() => {
+      // silently ignore load errors; they surface when the user interacts with /plugins
+    });
 
     this.sdk = rpcClient(this);
   }
@@ -158,6 +166,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       metadata: options.metadata,
     };
 
+    await this.pluginsReady;
+    const pluginBootstraps = this.plugins.enabledBootstraps();
+
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
     const session = new Session({
@@ -174,6 +185,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
+      pluginBootstraps,
     });
     try {
       session.metadata = {
@@ -236,6 +248,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       cwd: summary.workDir,
       homeDir: this.homeDir,
     });
+    await this.pluginsReady;
+    const pluginBootstraps = this.plugins.enabledBootstraps();
     const session = new Session({
       runtime: await this.resolveRuntime(config),
       id: summary.id,
@@ -251,6 +265,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       mcpConfig,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       initializeMainAgent: false,
+      pluginBootstraps,
     });
     try {
       await session.resume();
@@ -551,9 +566,17 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return {
       userHomeDir: this.userHomeDir,
       explicitDirs,
-      extraDirs: config.extraSkillDirs,
+      extraDirs: [
+        ...(config.extraSkillDirs ?? []),
+        ...this.plugins.enabledSkillDirs(),
+      ],
       mergeAllAvailableSkills: config.mergeAllAvailableSkills,
     };
+  }
+
+  private async resolveSessionPluginBootstraps(): Promise<readonly import('#/plugin').EnabledBootstrap[]> {
+    await this.pluginsReady;
+    return this.plugins.enabledBootstraps();
   }
 
   private sessionApi(sessionId: string): SessionAPIImpl {
