@@ -567,6 +567,48 @@ describe('Permission auto mode', () => {
     expect(requestApproval).not.toHaveBeenCalled();
   });
 
+  it('keeps ask rules higher priority than matching allow rules', async () => {
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.rules.push(
+      {
+        decision: 'allow',
+        scope: 'project',
+        pattern: 'Bash',
+      },
+      {
+        decision: 'ask',
+        scope: 'user',
+        pattern: 'Bash',
+      },
+    );
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_bash_ask_allow',
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'user-configured-ask',
+        tool_name: 'Bash',
+        decision: 'ask',
+      }),
+    );
+    expect(telemetryTrack).not.toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'user-configured-allow',
+      }),
+    );
+  });
+
   it('reuses approve-for-session for repeated outside-workspace reads in yolo mode', async () => {
     const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
@@ -602,10 +644,10 @@ describe('Permission policy chain', () => {
       'plan-mode-guard-deny',
       'user-configured-deny',
       'auto-mode-approve',
-      'user-configured-allow',
-      'exit-plan-mode-review-ask',
-      'session-approval-history',
       'user-configured-ask',
+      'exit-plan-mode-review-ask',
+      'user-configured-allow',
+      'session-approval-history',
       'plan-mode-tool-approve',
       'sensitive-file-access-ask',
       'git-control-path-access-ask',

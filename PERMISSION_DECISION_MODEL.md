@@ -53,7 +53,7 @@
 ## user-configured-deny: User Configured Deny Rules
 
 - 用户配置 `deny` rule 命中 -> `deny`
-- 本阶段只处理用户配置 `deny` rule；`allow` rule 在 Auto Mode Approve 之后判断，`ask` rule 在 Session Approval Memorized History 之后判断
+- 本阶段只处理用户配置 `deny` rule；`ask` / `allow` rule 在后续各自 policy 中按文档顺序判断
 - 用户规则按配置顺序扫描，命中第一条本阶段对应 decision 的 rule 即返回
 - `ToolName` 无括号参数时只匹配 tool name
 - `ToolName(ruleArgs)` 先匹配 tool name；tool name 命中后调用 `execution.matchesRule(ruleArgs)`，返回 `true` 才算命中
@@ -70,15 +70,19 @@
 - `permissionMode=auto` -> `approve`
 - 任何在 auto mode 下也必须阻止的规则都必须表达为 deny，并放在本 policy 之前
 
-## user-configured-allow: User Configured Allow Rules
+## user-configured-ask: User Configured Ask Rules
 
-- 用户配置 `allow` rule 命中 -> `approve`
-- 使用与 User Configured Deny Rules 相同的 rule 匹配方式
+- 用户配置 `ask` rule 命中 -> `ask`
 
 ## exit-plan-mode-review-ask: ExitPlanMode Review Ask
 
 - `ExitPlanMode` 且 plan mode active 且 plan 内容非空且 `permissionMode!=auto` -> `ask`
 - 本 policy 必须在 Session Approval Memorized History 之前执行；plan review 的审批对象包含当前 plan 内容，而 session history 只记 tool name + tool args，不能表达“这份新 plan 已经被 review”
+
+## user-configured-allow: User Configured Allow Rules
+
+- 用户配置 `allow` rule 命中 -> `approve`
+- 使用与 User Configured Deny Rules 相同的 rule 匹配方式
 
 ## session-approval-history: Session Approval Memorized History
 
@@ -87,10 +91,6 @@
 - tool args 比较使用结构化数据的稳定序列化结果；object key 顺序不应影响匹配，数组顺序和字符串内容必须保持精确匹配
 - 当用户选择 `Approve for session` 时，把本次 tool name + 完整 tool args 写入 session history
 - session history 只表达用户在本 session 内对同一 tool call 参数的临时批准，不等价于用户配置的 allow rule；持久化或跨 session 的信任应进入用户配置规则
-
-## user-configured-ask: User Configured Ask Rules
-
-- 用户配置 `ask` rule 命中 -> `ask`
 
 ## plan-mode-tool-approve: Plan Mode Tool Approve
 
