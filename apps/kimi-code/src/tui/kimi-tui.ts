@@ -152,6 +152,10 @@ import { buildStatusReportLines } from './components/messages/status-panel';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
 import {
+  buildPluginsInfoLines,
+  buildPluginsListLines,
+} from './components/messages/plugins-status-panel';
+import {
   buildUsageReportLines,
   UsagePanelComponent,
   type ManagedUsageReport,
@@ -1371,6 +1375,9 @@ export class KimiTUI {
         return;
       case 'mcp':
         void this.showMcpServers();
+        return;
+      case 'plugins':
+        void this.handlePluginsCommand(args);
         return;
       case 'editor':
         await this.handleEditorCommand(args, {});
@@ -4552,6 +4559,82 @@ export class KimiTUI {
     const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, ' Status ');
     this.state.transcriptContainer.addChild(panel);
     this.state.ui.requestRender();
+  }
+
+  private async handlePluginsCommand(rawArgs: string): Promise<void> {
+    const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
+    const sub = args[0];
+    const rest = args.slice(1);
+    const session = this.requireSession();
+
+    try {
+      if (sub === undefined || sub === 'list') {
+        const plugins = await session.listPlugins();
+        const lines = buildPluginsListLines({ colors: this.state.theme.colors, plugins });
+        const title = ` Plugins (${plugins.length}) `;
+        const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, title);
+        this.state.transcriptContainer.addChild(panel);
+        this.state.ui.requestRender();
+        return;
+      }
+      if (sub === 'install') {
+        const root = rest[0];
+        if (root === undefined) {
+          this.showError('Usage: /plugins install <absolute-path>');
+          return;
+        }
+        const summary = await session.installPlugin(root);
+        this.showStatus(
+          `Installed ${summary.displayName} (${summary.id}). Run /new to pick up its skills.`,
+        );
+        return;
+      }
+      if (sub === 'info') {
+        const id = rest[0];
+        if (id === undefined) {
+          this.showError('Usage: /plugins info <id>');
+          return;
+        }
+        const info = await session.getPluginInfo(id);
+        const lines = buildPluginsInfoLines({ colors: this.state.theme.colors, info });
+        const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, ` ${info.id} `);
+        this.state.transcriptContainer.addChild(panel);
+        this.state.ui.requestRender();
+        return;
+      }
+      if (sub === 'enable' || sub === 'disable') {
+        const id = rest[0];
+        if (id === undefined) {
+          this.showError(`Usage: /plugins ${sub} <id>`);
+          return;
+        }
+        await session.setPluginEnabled(id, sub === 'enable');
+        this.showStatus(
+          `${sub === 'enable' ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.`,
+        );
+        return;
+      }
+      if (sub === 'remove') {
+        const id = rest[0];
+        if (id === undefined) {
+          this.showError('Usage: /plugins remove <id>');
+          return;
+        }
+        await session.removePlugin(id);
+        this.showStatus(`Removed ${id} (source directory left in place).`);
+        return;
+      }
+      if (sub === 'reload') {
+        const summary = await session.reloadPlugins();
+        const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
+          (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
+        this.showStatus(line);
+        return;
+      }
+      this.showError(`Unknown /plugins subcommand: ${sub}`);
+    } catch (error) {
+      this.showError(`/plugins ${sub ?? ''} failed: ${formatErrorMessage(error)}`);
+    }
   }
 
   // Loads and renders current MCP server status.
