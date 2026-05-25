@@ -429,7 +429,7 @@ export class TurnFlow {
             prepareToolExecution: async (ctx) => {
               const cached = deduper.checkSameStep(
                 ctx.toolCall.id,
-                ctx.toolCall.function.name,
+                ctx.toolCall.name,
                 ctx.args,
               );
               if (cached !== null) return { syntheticResult: cached };
@@ -444,16 +444,16 @@ export class TurnFlow {
               // original's real outcome, not an empty success.
               const finalResult = await deduper.finalizeResult(
                 ctx.toolCall.id,
-                ctx.toolCall.function.name,
+                ctx.toolCall.name,
                 ctx.args,
                 ctx.result,
               );
               const { isError, output } = finalResult;
               const event = isError === true ? 'PostToolUseFailure' : 'PostToolUse';
               void this.agent.hooks?.fireAndForgetTrigger(event, {
-                matcherValue: ctx.toolCall.function.name,
+                matcherValue: ctx.toolCall.name,
                 inputData: {
-                  toolName: ctx.toolCall.function.name,
+                  toolName: ctx.toolCall.name,
                   toolInput: toolInputRecord(ctx.args),
                   toolCallId: ctx.toolCall.id,
                   error: isError === true ? toKimiErrorPayload(toolOutputText(output)) : undefined,

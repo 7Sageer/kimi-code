@@ -188,10 +188,8 @@ describe('Agent permission', () => {
     const bashCall: ToolCall = {
       type: 'function',
       id: 'call_bash',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"printf should-not-run","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"printf should-not-run","timeout":60}',
     };
     const ctx = testAgent({
       kaos: createFakeKaos({ execWithEnv }),
@@ -1977,10 +1975,8 @@ function bashCall(): ToolCall {
   return {
     type: 'function',
     id: 'call_bash',
-    function: {
-      name: 'Bash',
-      arguments: '{"command":"printf permission-output","timeout":60}',
-    },
+    name: 'Bash',
+    arguments: '{"command":"printf permission-output","timeout":60}',
   };
 }
 
@@ -2090,10 +2086,8 @@ function hookContext(input: {
   const toolCall: ToolCall = {
     type: 'function',
     id: input.id,
-    function: {
-      name: toolName,
+    name: toolName,
       arguments: JSON.stringify(args),
-    },
   };
   return {
     turnId: '0',

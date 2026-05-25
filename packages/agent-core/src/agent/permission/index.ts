@@ -118,7 +118,7 @@ export class PermissionManager {
   ): Promise<PrepareToolExecutionResult | undefined> {
     const { signal } = context;
     const id = context.toolCall.id;
-    const name = context.toolCall.function.name;
+    const name = context.toolCall.name;
     const display = approvalDisplayForExecution(name, context.execution);
     const action = approvalActionForExecution(name, context.execution);
     const sessionApprovalKey = stableToolArgsKey(name, context.args);
@@ -213,7 +213,7 @@ export class PermissionManager {
       case 'deny':
         return {
           block: true,
-          reason: result.message ?? this.formatPolicyDenyMessage(context.toolCall.function.name),
+          reason: result.message ?? this.formatPolicyDenyMessage(context.toolCall.name),
         };
       case 'ask':
         return this.requestToolApproval(context, result, policyName);
@@ -257,7 +257,7 @@ export class PermissionManager {
   ): void {
     const properties: Record<string, TelemetryProperties[string]> = {
       policy_name: policyName,
-      tool_name: context.toolCall.function.name,
+      tool_name: context.toolCall.name,
       permission_mode: this.mode,
       decision: result.kind,
     };
