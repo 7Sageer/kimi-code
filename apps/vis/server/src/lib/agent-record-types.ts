@@ -88,3 +88,12 @@ export interface WireResponse {
   records: readonly WireLine[];
   warnings: string[];
 }
+
+export interface AgentNode extends AgentInfo {
+  children: AgentNode[];
+}
+
+export interface AgentTreeResponse {
+  sessionId: string;
+  tree: AgentNode[];
+}

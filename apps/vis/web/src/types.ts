@@ -6,6 +6,8 @@ export type {
   SessionSummary,
   SessionDetail,
   AgentInfo,
+  AgentNode,
+  AgentTreeResponse,
   SessionHealth,
   WireResponse,
   WireLine,
