@@ -30,7 +30,7 @@ export class SensitiveFileAccessAskPermissionPolicy implements PermissionPolicy 
 }
 
 export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy {
-  private readonly gitMarkerCache = new Map<string, GitWorkTreeMarker>();
+  private readonly gitMarkerCache = new Map<string, GitWorkTreeMarker | null>();
   readonly name = 'git-control-path-access-ask';
 
   constructor(private readonly agent: Agent) {}
@@ -39,10 +39,25 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
     const cwd = this.agent.config.cwd;
     if (cwd.length === 0) return undefined;
     const pathClass = this.agent.runtime.kaos.pathClass();
-    const marker = await this.findGitMarker(cwd);
-    const access = firstFileAccess(context, (fileAccess) => {
+    const accesses = fileAccesses(context);
+    if (accesses.length === 0) return undefined;
+
+    const directGitAccess = accesses.find((fileAccess) => {
       if (fileAccess.path === undefined) return false;
-      return isGitControlPath(fileAccess.path, cwd, marker, pathClass);
+      return hasGitPathComponent(fileAccess.path, cwd, pathClass);
+    });
+    if (directGitAccess !== undefined) {
+      return {
+        kind: 'ask',
+        reason: fileAccessReason(directGitAccess, { git_control_path: true }),
+      };
+    }
+
+    const marker = await this.findGitMarker(cwd);
+    if (marker === null) return undefined;
+    const access = accesses.find((fileAccess) => {
+      if (fileAccess.path === undefined) return false;
+      return isGitControlPath(fileAccess.path, marker, pathClass);
     });
     if (access === undefined) return undefined;
     return {
@@ -52,10 +67,9 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
   }
 
   private async findGitMarker(cwd: string): Promise<GitWorkTreeMarker | null> {
-    const cached = this.gitMarkerCache.get(cwd);
-    if (cached !== undefined) return cached;
+    if (this.gitMarkerCache.has(cwd)) return this.gitMarkerCache.get(cwd) ?? null;
     const marker = await findGitWorkTreeMarker(this.agent.runtime.kaos, cwd);
-    if (marker !== null) this.gitMarkerCache.set(cwd, marker);
+    this.gitMarkerCache.set(cwd, marker);
     return marker;
   }
 }
@@ -87,8 +101,13 @@ function firstFileAccess(
   context: PermissionPolicyContext,
   predicate: (access: FileAccess) => boolean,
 ): FileAccess | undefined {
-  return context.execution.accesses?.find(
-    (access): access is FileAccess => access.kind === 'file' && predicate(access),
+  return fileAccesses(context).find((access) => predicate(access));
+}
+
+function fileAccesses(context: PermissionPolicyContext): FileAccess[] {
+  return (
+    context.execution.accesses?.filter((access): access is FileAccess => access.kind === 'file') ??
+    []
   );
 }
 
@@ -100,19 +119,22 @@ function fileAccessReason(access: FileAccess, extra: Record<string, boolean>) {
   };
 }
 
-function isGitControlPath(
+function hasGitPathComponent(
   targetPath: string,
   cwd: string,
-  marker: GitWorkTreeMarker | null,
   pathClass: PathClass,
 ): boolean {
-  if (relativePathParts(targetPath, cwd, pathClass).some((part) => part.toLowerCase() === '.git')) {
-    return true;
-  }
+  return relativePathParts(targetPath, cwd, pathClass).some((part) => part.toLowerCase() === '.git');
+}
+
+function isGitControlPath(
+  targetPath: string,
+  marker: GitWorkTreeMarker,
+  pathClass: PathClass,
+): boolean {
   return (
-    marker !== null &&
-    (isWithinDirectory(targetPath, marker.dotGitPath, pathClass) ||
-      isWithinDirectory(targetPath, marker.controlDirPath, pathClass))
+    isWithinDirectory(targetPath, marker.dotGitPath, pathClass) ||
+    isWithinDirectory(targetPath, marker.controlDirPath, pathClass)
   );
 }
 

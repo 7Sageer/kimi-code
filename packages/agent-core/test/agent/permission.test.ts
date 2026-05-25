@@ -1398,7 +1398,7 @@ describe('Default git CWD Write/Edit permission', () => {
   }
 
   it('still requests approval for Bash inside a git cwd in manual mode', async () => {
-    const { kaos } = gitKaos();
+    const { kaos, stat } = gitKaos();
     const { manager, requestApproval, telemetryTrack } = makePermissionManager(
       async () => ({ decision: 'approved' }),
       { kaos },
@@ -1418,6 +1418,7 @@ describe('Default git CWD Write/Edit permission', () => {
       'permission_policy_decision',
       expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
     );
+    expect(stat).not.toHaveBeenCalled();
   });
 
   it('bypasses approval for Write to a relative path inside a git cwd', async () => {
@@ -1483,6 +1484,31 @@ describe('Default git CWD Write/Edit permission', () => {
       'permission_policy_decision',
       expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
     );
+  });
+
+  it('caches missing git marker checks across repeated Write/Edit calls in the same cwd', async () => {
+    const stat = vi.fn<Kaos['stat']>().mockRejectedValue(new Error('ENOENT'));
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { kaos: createFakeKaos({ stat }) },
+    );
+
+    await expect(
+      manager.beforeToolCall(writeHook({ path: 'src/a.ts', content: 'x' }, 'call_1')),
+    ).resolves.toBeUndefined();
+    await expect(
+      manager.beforeToolCall(
+        editHook({ path: 'src/b.ts', old_string: 'A', new_string: 'B' }, 'call_2'),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(2);
+    expect(stat.mock.calls.map(([path]) => path)).toEqual([
+      '/workspace/.git',
+      '/.git',
+      '/workspace/.git',
+      '/.git',
+    ]);
   });
 
   it('still requests approval when a relative path escapes cwd via ..', async () => {

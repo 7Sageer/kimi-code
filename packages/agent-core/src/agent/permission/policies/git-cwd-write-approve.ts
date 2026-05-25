@@ -8,7 +8,7 @@ import {
 import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
 
 export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
-  private readonly gitMarkerCache = new Map<string, GitWorkTreeMarker>();
+  private readonly gitMarkerCache = new Map<string, GitWorkTreeMarker | null>();
   readonly name = 'git-cwd-write-approve';
 
   constructor(private readonly agent: Agent) {}
@@ -42,10 +42,9 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
   }
 
   private async findGitMarker(cwd: string): Promise<GitWorkTreeMarker | null> {
-    const cached = this.gitMarkerCache.get(cwd);
-    if (cached !== undefined) return cached;
+    if (this.gitMarkerCache.has(cwd)) return this.gitMarkerCache.get(cwd) ?? null;
     const marker = await findGitWorkTreeMarker(this.agent.runtime.kaos, cwd);
-    if (marker !== null) this.gitMarkerCache.set(cwd, marker);
+    this.gitMarkerCache.set(cwd, marker);
     return marker;
   }
 }
