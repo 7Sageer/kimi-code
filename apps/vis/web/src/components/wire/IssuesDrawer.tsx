@@ -9,7 +9,7 @@ interface IssuesDrawerProps {
   /** Optional predicate: "is this line currently visible under the active
    *  filter?". When provided, jump buttons for filtered-out lines are
    *  disabled and flagged. */
-  isSeqVisible?: (lineNo: number) => boolean;
+  isLineVisible?: (lineNo: number) => boolean;
 }
 
 const SEV_COLOR: Record<IssueSeverity, string> = {
@@ -28,7 +28,7 @@ const KIND_LABEL: Record<Issue['kind'], string> = {
   wire_warning: 'wire warning',
 };
 
-export function IssuesDrawer({ issues, onClose, onJumpTo, isSeqVisible }: IssuesDrawerProps) {
+export function IssuesDrawer({ issues, onClose, onJumpTo, isLineVisible }: IssuesDrawerProps) {
   // ESC closes — standard drawer affordance.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -78,7 +78,7 @@ export function IssuesDrawer({ issues, onClose, onJumpTo, isSeqVisible }: Issues
                   issue={iss}
                   onJumpTo={onJumpTo}
                   onClose={onClose}
-                  isLineVisible={isSeqVisible}
+                  isLineVisible={isLineVisible}
                 />
               ))}
             </ul>

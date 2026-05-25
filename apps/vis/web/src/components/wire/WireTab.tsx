@@ -223,7 +223,7 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
             setDrawerOpen(false);
           }}
           onJumpTo={jumpToLine}
-          isSeqVisible={(lineNo) => filteredLineIdx.has(lineNo)}
+          isLineVisible={(lineNo) => filteredLineIdx.has(lineNo)}
         />
       ) : null}
     </div>
