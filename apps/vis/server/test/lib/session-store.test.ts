@@ -50,6 +50,22 @@ describe('session-store', () => {
     expect(sessions).toHaveLength(0);
   });
 
+  it('marks a session broken_main_wire when its wire file cannot be scanned', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { rm, mkdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    // Replace the wire FILE with a directory of the same name, so the
+    // createReadStream below will reject with EISDIR.
+    const wirePath = join(sessionDir, 'agents', 'main', 'wire.jsonl');
+    await rm(wirePath);
+    await mkdir(wirePath);
+    const sessions = await listSessions(home);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.health).toBe('broken_main_wire');
+    expect(sessions[0]!.mainWireRecordCount).toBe(0);
+  });
+
   it('returns broken-state detail consistent with the listed broken summary', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;

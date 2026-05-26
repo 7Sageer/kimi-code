@@ -71,11 +71,16 @@ async function tryReadSummary(sessionDir: string, sessionId: string, workDir: st
   if (!mainExists) {
     health = 'missing_main_wire';
   } else {
-    const info = await scanWire(mainWirePath);
-    mainCount = info.count;
-    protocolVersion = info.protocolVersion;
-    if (protocolVersion !== null && protocolVersion !== SUPPORTED_PROTOCOL) {
-      health = 'unsupported_protocol';
+    try {
+      const info = await scanWire(mainWirePath);
+      mainCount = info.count;
+      protocolVersion = info.protocolVersion;
+      if (protocolVersion !== null && protocolVersion !== SUPPORTED_PROTOCOL) {
+        health = 'unsupported_protocol';
+      }
+    } catch {
+      // A single unreadable wire file must not fail the whole list.
+      health = 'broken_main_wire';
     }
   }
 
@@ -137,7 +142,16 @@ async function inventoryAgents(sessionDir: string, state: StateJson): Promise<Ag
   for (const [id, meta] of Object.entries(state.agents ?? {})) {
     const wirePath = join(sessionDir, 'agents', id, 'wire.jsonl');
     const exists = await pathExists(wirePath);
-    const info = exists ? await scanWire(wirePath) : { count: 0, protocolVersion: null };
+    let info: { count: number; protocolVersion: string | null } = { count: 0, protocolVersion: null };
+    if (exists) {
+      try {
+        info = await scanWire(wirePath);
+      } catch {
+        // Surface as wireExists=false rather than throwing; callers
+        // already render a "no wire" badge for that case.
+        info = { count: 0, protocolVersion: null };
+      }
+    }
     result.push({
       agentId: id,
       type: meta.type,
