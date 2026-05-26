@@ -35,6 +35,27 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from './request-auth';
+
+// Inbound: scan in priority order; first string value wins. Outbound: the first
+// entry doubles as the default field we serialize ThinkPart back into. Both
+// arms can be overridden by an explicit `reasoningKey` on the provider config.
+const KNOWN_REASONING_KEYS = ['reasoning_content', 'reasoning_details', 'reasoning'] as const;
+const DEFAULT_OUTBOUND_REASONING_KEY = KNOWN_REASONING_KEYS[0];
+
+function extractReasoningContent(
+  source: unknown,
+  explicitKey: string | undefined,
+): string | undefined {
+  if (typeof source !== 'object' || source === null) return undefined;
+  const record = source as Record<string, unknown>;
+  const keys: readonly string[] = explicitKey !== undefined ? [explicitKey] : KNOWN_REASONING_KEYS;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return undefined;
+}
+
 export interface OpenAILegacyOptions {
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
@@ -147,9 +168,13 @@ function convertMessage(
     result.tool_call_id = message.toolCallId;
   }
 
-  // Place reasoning content under the configured key (e.g. "reasoning_content" for DeepSeek)
-  if (reasoningContent && reasoningKey) {
-    result[reasoningKey] = reasoningContent;
+  // Round-trip thinking content back to the server. Default to the de facto
+  // `reasoning_content` field so OpenAI-compatible reasoners (DeepSeek, Qwen,
+  // One API gateways) work without per-provider configuration. Servers that
+  // don't understand the field ignore it; servers that require a specific
+  // field can override via the explicit `reasoningKey`.
+  if (reasoningContent) {
+    result[reasoningKey ?? DEFAULT_OUTBOUND_REASONING_KEY] = reasoningContent;
   }
 
   return result;
@@ -218,12 +243,11 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     const message = response.choices[0]?.message;
     if (!message) return;
 
-    // Reasoning content via configured key
-    if (reasoningKey) {
-      const rc = (message as unknown as Record<string, unknown>)[reasoningKey];
-      if (typeof rc === 'string' && rc) {
-        yield { type: 'think', think: rc } satisfies StreamedMessagePart;
-      }
+    // Reasoning content: honor the explicit key when set, otherwise scan the
+    // de facto field set so hand-written configs work without it.
+    const reasoning = extractReasoningContent(message, reasoningKey);
+    if (reasoning) {
+      yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
     if (message.content) {
@@ -274,12 +298,11 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
         const delta = choice.delta;
 
-        // Reasoning content via configured key
-        if (reasoningKey) {
-          const rc = (delta as unknown as Record<string, unknown>)[reasoningKey];
-          if (typeof rc === 'string' && rc) {
-            yield { type: 'think', think: rc } satisfies StreamedMessagePart;
-          }
+        // Reasoning content: honor the explicit key when set, otherwise scan
+        // the de facto field set so hand-written configs work without it.
+        const reasoning = extractReasoningContent(delta, reasoningKey);
+        if (reasoning) {
+          yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
         // text content
@@ -381,7 +404,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     // was not explicitly configured. This prevents server validation errors from APIs
     // (e.g. One API) that require reasoning_effort when messages contain reasoning_content.
     // See: https://github.com/MoonshotAI/kimi-code/issues/1616
-    if (reasoningEffort === undefined && this._reasoningKey) {
+    if (reasoningEffort === undefined) {
       const hasThinkPart = history.some((message) =>
         message.content.some((part) => part.type === 'think'),
       );
