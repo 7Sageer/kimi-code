@@ -42,17 +42,18 @@ export async function listSessions(home: string): Promise<SessionSummary[]> {
 export async function readSessionDetail(home: string, sessionId: string): Promise<SessionDetail | null> {
   const sessionDir = await findSessionDir(home, sessionId);
   if (sessionDir === null) return null;
-  const state = await readState(sessionDir);
-  if (state === null) return null;
-  if (state.custom?.['imported_from_kimi_cli'] === true) return null;
   const index = await readSessionIndex(home);
+  const workDir = index.get(sessionId)?.workDir ?? '';
+  const state = await readState(sessionDir);
+  // Mirror the list path: when state.json is unreadable, still return a
+  // SessionDetail so callers can render a broken-state diagnostic instead of
+  // a hard 404. Agents inventory requires state.agents, so it is empty here.
+  if (state === null) {
+    return { sessionId, workDir, state: null, agents: [] };
+  }
+  if (state.custom?.['imported_from_kimi_cli'] === true) return null;
   const agents = await inventoryAgents(sessionDir, state);
-  return {
-    sessionId,
-    workDir: index.get(sessionId)?.workDir ?? '',
-    state,
-    agents,
-  };
+  return { sessionId, workDir, state, agents };
 }
 
 async function tryReadSummary(sessionDir: string, sessionId: string, workDir: string): Promise<SessionSummary | null> {

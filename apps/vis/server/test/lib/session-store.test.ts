@@ -50,6 +50,22 @@ describe('session-store', () => {
     expect(sessions).toHaveLength(0);
   });
 
+  it('returns broken-state detail consistent with the listed broken summary', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    await writeFile(join(sessionDir, 'state.json'), '{ this is not json');
+    const summaries = await listSessions(home);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]!.health).toBe('broken_state');
+    const d = await readSessionDetail(home, 'session_fixture');
+    expect(d).not.toBeNull();
+    expect(d!.state).toBeNull();
+    expect(d!.agents).toEqual([]);
+    expect(d!.workDir).toBe('/tmp/work');
+  });
+
   it('reads session detail with full agent inventory', async () => {
     const { home, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
