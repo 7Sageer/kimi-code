@@ -20,7 +20,9 @@ export function contextRoute(): Hono {
       return c.json({ error: 'agent wire not found', code: 'NOT_FOUND' }, 404);
     }
     try {
-      const wire = await readAgentWire(join(agent.homedir, 'wire.jsonl'));
+      const wire = await readAgentWire(
+        join(detail.sessionDir, 'agents', agentId, 'wire.jsonl'),
+      );
       const proj = projectContext(wire.records);
       return c.json({
         sessionId: id,

@@ -69,6 +69,10 @@ export interface AgentInfo {
 
 export interface SessionDetail {
   sessionId: string;
+  /** Canonical on-disk session directory. Routes derive agent wire paths
+   *  from this rather than the mutable `homedir` field inside `state.json`,
+   *  which can drift after fork/rename. */
+  sessionDir: string;
   workDir: string;
   state: unknown; // 原样透传，前端按 state.json 真实形状渲染
   agents: AgentInfo[];

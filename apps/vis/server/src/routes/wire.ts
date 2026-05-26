@@ -22,7 +22,9 @@ export function wireRoute(): Hono {
       return c.json({ error: 'wire missing', code: 'NOT_FOUND' }, 404);
     }
     try {
-      const result = await readAgentWire(join(agent.homedir, 'wire.jsonl'));
+      const result = await readAgentWire(
+        join(detail.sessionDir, 'agents', agentId, 'wire.jsonl'),
+      );
       return c.json({
         sessionId: id,
         agentId,

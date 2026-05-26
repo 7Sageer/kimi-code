@@ -49,11 +49,11 @@ export async function readSessionDetail(home: string, sessionId: string): Promis
   // SessionDetail so callers can render a broken-state diagnostic instead of
   // a hard 404. Agents inventory requires state.agents, so it is empty here.
   if (state === null) {
-    return { sessionId, workDir, state: null, agents: [] };
+    return { sessionId, sessionDir, workDir, state: null, agents: [] };
   }
   if (state.custom?.['imported_from_kimi_cli'] === true) return null;
   const agents = await inventoryAgents(sessionDir, state);
-  return { sessionId, workDir, state, agents };
+  return { sessionId, sessionDir, workDir, state, agents };
 }
 
 async function tryReadSummary(sessionDir: string, sessionId: string, workDir: string): Promise<SessionSummary | null> {

@@ -66,6 +66,13 @@ describe('session-store', () => {
     expect(sessions[0]!.mainWireRecordCount).toBe(0);
   });
 
+  it('exposes the canonical session directory in detail responses', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const d = await readSessionDetail(home, 'session_fixture');
+    expect(d!.sessionDir).toBe(sessionDir);
+  });
+
   it('returns broken-state detail consistent with the listed broken summary', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
