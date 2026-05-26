@@ -24,6 +24,7 @@ export interface TelemetryTransport {
 export function isTelemetryPrimitive(value: unknown): value is TelemetryPrimitive {
   return (
     value === null ||
+    value === undefined ||
     typeof value === 'boolean' ||
     typeof value === 'string' ||
     (typeof value === 'number' && Number.isFinite(value))
