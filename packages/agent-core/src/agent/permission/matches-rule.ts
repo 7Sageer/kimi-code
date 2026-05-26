@@ -1,4 +1,5 @@
 import picomatch from 'picomatch';
+import regexpEscape from 'regexp.escape';
 
 import type { RunnableToolExecution } from '../../loop/types';
 import { matchesRuleSubject } from '../../tools/support/rule-match';
@@ -115,6 +116,10 @@ export function matchPermissionRule({
   }
 
   return undefined;
+}
+
+export function exactArgsRulePattern(toolName: string, args: unknown): string {
+  return `${toolName}(^${regexpEscape(stableSerialize(args))}$)`;
 }
 
 function singleActualFieldValue(args: unknown): unknown {

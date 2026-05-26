@@ -91,7 +91,7 @@
 - `Approve for session` 记住的是本次 `execution.approvalRule`
 - 后续请求用 `approvalRule` 生成的 `session-runtime` rule 走与用户配置 rule 相同的 parser / matcher；命中 -> `approve`
 - `session-runtime` rule 只在本 session replay / parent-child 继承中生效，不作为用户配置 rule 参与 `user-configured-*` policies
-- 如果 `execution.approvalRule` 缺失，则本次 approval 仍可 approve once，但不会写入 session history
+- `execution.approvalRule` 是必选字段；tool 必须明确给出 session approval 的记忆边界
 - v1.1 -> v1.2 wire migration 会把缺少 `sessionApprovalRule` 的 legacy session approval record 按旧 action label 尽力补成 rule；runtime 不再做 legacy record 兼容
 
 ## plan-mode-tool-approve: Plan Mode Tool Approve

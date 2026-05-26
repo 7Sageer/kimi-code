@@ -1,3 +1,4 @@
+import { exactArgsRulePattern } from '../../../src/agent/permission/matches-rule';
 import { ToolAccesses } from '../../../src/loop/index';
 import type {
   ExecutableTool,
@@ -52,6 +53,7 @@ export class EchoTool implements ExecutableTool<EchoInput> {
 
   resolveExecution(args: EchoInput): ToolExecution {
     return {
+      approvalRule: exactArgsRulePattern(this.name, args),
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,
@@ -79,6 +81,7 @@ export class FailingTool implements ExecutableTool<FailingInput> {
 
   resolveExecution(args: FailingInput): ToolExecution {
     return {
+      approvalRule: exactArgsRulePattern(this.name, args),
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,
@@ -114,6 +117,7 @@ export class SlowTool implements ExecutableTool<SlowInput> {
 
   resolveExecution(args: SlowInput): ToolExecution {
     return {
+      approvalRule: exactArgsRulePattern(this.name, args),
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,
@@ -152,6 +156,7 @@ export class HangingTool implements ExecutableTool<Record<string, unknown>> {
 
   resolveExecution(args: Record<string, unknown>): ToolExecution {
     return {
+      approvalRule: exactArgsRulePattern(this.name, args),
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,
@@ -186,6 +191,7 @@ export class ProgressTool implements ExecutableTool<ProgressInput> {
 
   resolveExecution(args: ProgressInput): ToolExecution {
     return {
+      approvalRule: exactArgsRulePattern(this.name, args),
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,
@@ -211,6 +217,7 @@ export class StrictArgsTool implements ExecutableTool<StrictInput> {
 
   resolveExecution(args: StrictInput): ToolExecution {
     return {
+      approvalRule: exactArgsRulePattern(this.name, args),
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,
@@ -240,6 +247,7 @@ export class ContentBlocksTool implements ExecutableTool<Record<string, unknown>
 
   resolveExecution(args: Record<string, unknown>): ToolExecution {
     return {
+      approvalRule: exactArgsRulePattern(this.name, args),
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,
@@ -284,6 +292,7 @@ export class GatedTool implements ExecutableTool<Record<string, unknown>> {
 
   resolveExecution(args: Record<string, unknown>): ToolExecution {
     return {
+      approvalRule: exactArgsRulePattern(this.name, args),
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,

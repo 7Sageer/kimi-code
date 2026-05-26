@@ -103,6 +103,7 @@ function permissionContext(args: ExitPlanModeInput): PermissionPolicyContext {
     execution: {
       description: 'Presenting plan and exiting plan mode',
       display,
+      approvalRule: 'ExitPlanMode',
       execute: async () => ({ output: '' }),
     },
   };

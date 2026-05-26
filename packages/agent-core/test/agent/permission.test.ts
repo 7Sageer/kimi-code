@@ -13,6 +13,7 @@ import {
   type PermissionRule,
 } from '../../src/agent/permission';
 import {
+  exactArgsRulePattern,
   matchPermissionRule,
   parsePattern,
   type PermissionRuleMatchExecution,
@@ -345,7 +346,6 @@ describe('Permission auto mode', () => {
       tool_name: 'Bash',
       permission_mode: mode,
       decision: 'approve',
-      has_execution_metadata: false,
     });
   });
 
@@ -366,7 +366,6 @@ describe('Permission auto mode', () => {
       tool_name: 'Bash',
       permission_mode: 'auto',
       decision: 'approve',
-      has_execution_metadata: false,
     });
   });
 
@@ -1121,7 +1120,6 @@ describe('Agent-local approve for session', () => {
         tool_name: 'Bash',
         permission_mode: 'manual',
         decision: 'ask',
-        approval_surface: 'command',
       }),
     );
     expect(telemetryTrack).toHaveBeenNthCalledWith(
@@ -1968,6 +1966,22 @@ describe('Permission rule helpers', () => {
   });
 
   it('falls back to stable args and single-field matching when execution has no matcher', () => {
+    const exactArgsPattern = exactArgsRulePattern('Custom', {
+      query: 'a.b',
+      nested: { value: 1 },
+    });
+    expect(
+      ruleMatches(permissionRule(exactArgsPattern), 'Custom', {
+        nested: { value: 1 },
+        query: 'a.b',
+      }),
+    ).toBe(true);
+    expect(
+      ruleMatches(permissionRule(exactArgsPattern), 'Custom', {
+        nested: { value: 1 },
+        query: 'axb',
+      }),
+    ).toBe(false);
     expect(
       ruleMatches(permissionRule('Bash("command":"git status")'), 'Bash', {
         command: 'git status',
@@ -2174,6 +2188,7 @@ function planReviewExecution(input: {
       options: input.options,
     },
     accesses: ToolAccesses.none(),
+    approvalRule: 'ExitPlanMode',
     execute: async () => ({ output: '' }),
   };
 }
@@ -2188,7 +2203,9 @@ function testExecution(
     display: testDisplay(toolName, args),
     accesses: testAccesses(toolName, args),
     approvalRule:
-      ruleSubject === undefined ? undefined : literalRulePattern(toolName, ruleSubject),
+      ruleSubject === undefined
+        ? exactArgsRulePattern(toolName, args)
+        : literalRulePattern(toolName, ruleSubject),
     matchesRule:
       ruleSubject === undefined
         ? undefined

@@ -574,6 +574,7 @@ class PathLockedGatedTool implements ExecutableTool<PathLockedInput> {
   resolveExecution(input: PathLockedInput): ToolExecution {
     return {
       accesses: ToolAccesses.writeFile(input.path),
+      approvalRule: this.name,
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,

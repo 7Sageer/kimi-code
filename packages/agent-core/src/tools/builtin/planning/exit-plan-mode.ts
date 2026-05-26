@@ -98,6 +98,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     return {
       description: 'Presenting plan and exiting plan mode',
       display: await this.resolvePlanReviewDisplay(args),
+      approvalRule: this.name,
       execute: (ctx) => this.execution(args, ctx),
     };
   }

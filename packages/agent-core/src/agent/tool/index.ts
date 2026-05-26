@@ -3,6 +3,7 @@ import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
 import picomatch from 'picomatch';
 
 import type { Agent } from '..';
+import { exactArgsRulePattern } from '../permission/matches-rule';
 import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
@@ -92,6 +93,7 @@ export class ToolManager {
       parameters,
       resolveExecution: (args) => {
         return {
+          approvalRule: exactArgsRulePattern(name, args),
           execute: async (context) => {
             return this.agent.rpc.toolCall(
               {
@@ -156,6 +158,7 @@ export class ToolManager {
         parameters: tool.parameters,
         resolveExecution: (args) => {
           return {
+            approvalRule: exactArgsRulePattern(qualified, args),
             execute: async (context) => {
               // `args` has already been JSON-parsed and schema-validated by
               // the loop's preflight (`loop/tool-call.ts`), so the MCP

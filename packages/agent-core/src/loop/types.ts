@@ -115,7 +115,7 @@ export interface RunnableToolExecution {
   readonly accesses?: ToolAccesses | undefined;
   readonly display?: ToolInputDisplay | undefined;
   readonly description?: string;
-  readonly approvalRule?: string | undefined;
+  readonly approvalRule: string;
   readonly matchesRule?: ((ruleArgs: string) => boolean) | undefined;
   readonly execute: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
 }

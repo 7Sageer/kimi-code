@@ -57,6 +57,7 @@ function policyContext(
     ...hookContext(toolName, args),
     execution: {
       accesses: toolAccesses(toolName, args),
+      approvalRule: toolName,
       execute: async () => ({ output: '' }),
     },
   };
