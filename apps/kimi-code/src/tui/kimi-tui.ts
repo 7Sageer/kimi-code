@@ -196,6 +196,7 @@ import {
   NO_ACTIVE_SESSION_MESSAGE,
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
+  PRODUCT_NAME,
 } from './constant/kimi-tui';
 import { STREAMING_UI_FLUSH_MS } from './constant/streaming';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
@@ -5373,34 +5374,83 @@ export class KimiTUI {
     });
   }
 
-  // Handles the /logout command.
+  // Handles the /logout command. Lists every credential currently held — the
+  // Kimi Code OAuth token (when present) plus each configured API-key provider
+  // — and lets the user pick which one to drop. managed:kimi-code is also
+  // written into config.providers, so it must be filtered out of the API-key
+  // list to avoid showing twice; OAuth tokens go through auth.logout for
+  // proper revocation, everything else through removeProvider.
   private async handleLogoutCommand(): Promise<void> {
+    const oauthStatus = await this.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
+    const hasOAuth = oauthStatus.providers.some(
+      (p) => p.providerName === DEFAULT_OAUTH_PROVIDER_NAME && p.hasToken,
+    );
+    const config = await this.harness.getConfig();
+    const apiKeyProviderIds = Object.keys(config.providers ?? {})
+      .filter((id) => id !== DEFAULT_OAUTH_PROVIDER_NAME)
+      .toSorted();
+
+    const options: ChoiceOption[] = [];
+    if (hasOAuth) {
+      options.push({
+        value: DEFAULT_OAUTH_PROVIDER_NAME,
+        label: PRODUCT_NAME,
+        description: 'OAuth login',
+      });
+    }
+    for (const id of apiKeyProviderIds) {
+      const baseUrl = config.providers[id]?.baseUrl;
+      options.push({
+        value: id,
+        label: id,
+        description: typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl : undefined,
+      });
+    }
+
+    if (options.length === 0) {
+      this.showStatus('Nothing to logout.');
+      return;
+    }
+
     const currentModel = this.state.appState.model.trim();
     const currentProvider = this.state.appState.availableModels[currentModel]?.provider;
 
-    if (currentProvider === undefined || currentProvider === DEFAULT_OAUTH_PROVIDER_NAME) {
+    const target = await this.promptLogoutProviderSelection(options, currentProvider);
+    if (target === undefined) return;
+
+    if (target === DEFAULT_OAUTH_PROVIDER_NAME) {
       await this.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
-      await this.refreshConfigAfterLogout();
-      await this.clearActiveSessionAfterLogout();
-      this.track('logout', { provider: DEFAULT_OAUTH_PROVIDER_NAME });
-      this.showStatus('Logged out.');
-      return;
+    } else {
+      await this.harness.removeProvider(target);
     }
+    await this.refreshConfigAfterLogout();
+    await this.clearActiveSessionAfterLogout();
+    this.track('logout', { provider: target });
+    const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
+    this.showStatus(`Logged out from ${label}.`);
+  }
 
-    // Any other provider written into config — OpenPlatform OAuth targets and
-    // /connect-configured catalog providers both go through removeProvider,
-    // which drops the provider entry and its model aliases together.
-    const existingConfig = await this.harness.getConfig();
-    if (existingConfig.providers[currentProvider] !== undefined) {
-      await this.harness.removeProvider(currentProvider);
-      await this.refreshConfigAfterLogout();
-      await this.clearActiveSessionAfterLogout();
-      this.track('logout', { provider: currentProvider });
-      this.showStatus(`Logged out from ${currentProvider}.`);
-      return;
-    }
-
-    this.showStatus('Nothing to logout.');
+  private promptLogoutProviderSelection(
+    options: readonly ChoiceOption[],
+    currentValue: string | undefined,
+  ): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const picker = new ChoicePickerComponent({
+        title: 'Select a provider to log out',
+        options,
+        currentValue,
+        colors: this.state.theme.colors,
+        onSelect: (value) => {
+          this.restoreEditor();
+          resolve(value);
+        },
+        onCancel: () => {
+          this.restoreEditor();
+          resolve(undefined);
+        },
+      });
+      this.mountEditorReplacement(picker);
+    });
   }
 
   // ---------------------------------------------------------------------------

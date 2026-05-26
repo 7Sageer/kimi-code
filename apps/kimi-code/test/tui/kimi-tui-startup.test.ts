@@ -567,12 +567,24 @@ describe("KimiTUI startup", () => {
 
   it("tracks logout after managed credentials and session state are cleared", async () => {
     const session = makeSession();
-    const harness = makeHarness(session);
+    const harness = makeHarness(session, {
+      auth: {
+        status: vi.fn(async () => ({
+          providers: [{ providerName: "managed:kimi-code", hasToken: true }],
+        })),
+        login: vi.fn(async () => {}),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
     const driver = makeDriver(harness, makeStartupInput());
 
     await expect(driver.init()).resolves.toBe(false);
     harness.track.mockClear();
 
+    vi.spyOn(driver as any, "promptLogoutProviderSelection").mockResolvedValue(
+      "managed:kimi-code",
+    );
     await driver.handleLogoutCommand();
 
     expect(harness.auth.logout).toHaveBeenCalledWith("managed:kimi-code");
