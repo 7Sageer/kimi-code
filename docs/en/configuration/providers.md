@@ -31,14 +31,14 @@ The most common ways to switch providers are: use the `/model` slash command ins
 
 ## `/connect` and the model catalog
 
-Instead of writing `[providers.*]` and `[models.*]` tables by hand, run the `/connect` slash command inside the TUI to add a provider from a **model catalog**. The catalog lists known providers and models together with their context window, output limit, and capabilities; `/connect` lets you pick a provider, pick a model, enter an API key, and writes the resulting `[providers.<name>]` and `[models.<alias>]` entries to `config.toml` for you.
+Instead of writing `[providers.*]` and `[models.*]` tables by hand, run the `/connect` slash command inside the TUI to add a provider from a **model catalog**. The catalog lists known providers and models together with their context window, output limit, and capabilities. `/connect` prompts you to pick a provider and a model, asks for an API key, and writes the resulting `[providers.<name>]` and `[models.<alias>]` entries to `config.toml`.
 
-The default catalog is bundled with the CLI, so `/connect` works offline. Two flags adjust where the catalog comes from:
+The default catalog is bundled with the CLI, so `/connect` works offline. Two flags change the catalog source:
 
 - `/connect --refresh` fetches the latest catalog from [models.dev](https://models.dev/) before showing the picker.
-- `/connect --url=<catalog-url>` reads from a custom catalog endpoint that follows the same format. Only `http://` and `https://` URLs are accepted.
+- `/connect --url=<catalog-url>` reads the catalog from a custom URL that follows the same format. Only `http://` and `https://` URLs are accepted.
 
-`/connect` only offers the provider types listed in the table above. For provider types not covered by the catalog, configure them by hand in `config.toml` as described in the per-type sections below.
+`/connect` only configures the provider types listed in the table above. For other provider types, configure them by hand in `config.toml` as described in the per-type sections below.
 
 `/logout` works on `/connect`-configured providers too: it removes the corresponding `[providers.<name>]` entry from `config.toml`.
 
