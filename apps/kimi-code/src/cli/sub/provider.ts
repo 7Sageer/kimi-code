@@ -110,13 +110,22 @@ export async function handleProviderAdd(
     deps.exit(1);
   }
 
+  // `harness.removeProvider` reloads the config from disk on each call (see
+  // `core-impl.ts removeKimiProvider`), so calling it inside the apply loop
+  // would discard providers we already applied in memory but have not yet
+  // persisted. Drop every stale id up front in a single batch instead, then
+  // apply against the resulting fresh config.
   let config = await harness.getConfig();
+  const staleIds = entryList
+    .filter((entry) => config.providers[entry.id] !== undefined)
+    .map((entry) => entry.id);
+  for (const id of staleIds) {
+    config = await harness.removeProvider(id);
+  }
+
   const addedProviderIds: string[] = [];
   let modelCount = 0;
   for (const entry of entryList) {
-    if (config.providers[entry.id] !== undefined) {
-      config = await harness.removeProvider(entry.id);
-    }
     applyCustomRegistryProvider(asManaged(config), entry, source);
     addedProviderIds.push(entry.id);
     modelCount += Object.keys(entry.models).length;
@@ -322,17 +331,25 @@ export async function handleCatalogAdd(
   await harness.ensureConfigFile();
 
   let config = await harness.getConfig();
+
+  // Capture defaults BEFORE `removeProvider`, because that call clears
+  // `defaultModel` when it points at one of this provider's aliases (see
+  // `core-impl.ts removeKimiProvider`). Without this, re-importing an
+  // already-configured provider would lose the user's previously-set default
+  // even when `--default-model` is not supplied.
+  const previousDefaultModel = config.defaultModel;
+  const previousDefaultThinking = config.defaultThinking;
+
   if (config.providers[providerId] !== undefined) {
     config = await harness.removeProvider(providerId);
   }
 
   const baseUrl = catalogBaseUrl(entry, wire);
-  // `applyCatalogProvider` always assigns `defaultModel`; we restore the
-  // previous one (or unset it entirely) when the caller did not request a
-  // catalog model as the new default.
-  const previousDefaultModel = config.defaultModel;
-  const previousDefaultThinking = config.defaultThinking;
-
+  // `applyCatalogProvider` always assigns both `defaultModel` and
+  // `defaultThinking`; we restore the prior values when the caller did not
+  // request a new default. `thinking: false` here is just a placeholder —
+  // it is either honored (defaultModel requested) or immediately overwritten
+  // by `previousDefaultThinking` below.
   applyCatalogProvider(config, {
     providerId,
     wire,
@@ -340,7 +357,7 @@ export async function handleCatalogAdd(
     apiKey,
     models,
     selectedModelId: opts.defaultModel ?? '',
-    thinking: false,
+    thinking: previousDefaultThinking ?? false,
   });
 
   if (opts.defaultModel === undefined) {

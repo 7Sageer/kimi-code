@@ -37,32 +37,43 @@ function makeHarness(initial: KimiConfig): {
   setConfigCalls: Array<Partial<KimiConfig>>;
   removeCalls: string[];
 } {
-  let config: KimiConfig = structuredClone(initial);
+  // `persisted` simulates the on-disk config; the real RPC's `removeProvider`
+  // reads from / writes to disk on every call (see
+  // `packages/agent-core/src/rpc/core-impl.ts removeKimiProvider`). Tests must
+  // model this: anything the handler builds up in its in-memory `config`
+  // object disappears unless it is flushed via `setConfig` BEFORE the next
+  // `removeProvider`.
+  let persisted: KimiConfig = structuredClone(initial);
   const setConfigCalls: Array<Partial<KimiConfig>> = [];
   const removeCalls: string[] = [];
   const harness: FakeHarness = {
     ensureConfigFile: async () => {},
-    getConfig: async () => structuredClone(config),
+    getConfig: async () => structuredClone(persisted),
     setConfig: async (patch) => {
       setConfigCalls.push(structuredClone(patch));
-      config = { ...config, ...patch } as KimiConfig;
-      return structuredClone(config);
+      persisted = { ...persisted, ...patch } as KimiConfig;
+      return structuredClone(persisted);
     },
     removeProvider: async (providerId) => {
       removeCalls.push(providerId);
-      const nextProviders = { ...config.providers };
+      const nextProviders = { ...persisted.providers };
       delete nextProviders[providerId];
-      const nextModels = { ...config.models };
+      const nextModels = { ...persisted.models };
+      let removedDefault = false;
       for (const [alias, model] of Object.entries(nextModels)) {
-        if (model.provider === providerId) delete nextModels[alias];
+        if (model.provider === providerId) {
+          delete nextModels[alias];
+          if (persisted.defaultModel === alias) removedDefault = true;
+        }
       }
-      config = { ...config, providers: nextProviders, models: nextModels };
-      return structuredClone(config);
+      persisted = { ...persisted, providers: nextProviders, models: nextModels };
+      if (removedDefault) persisted = { ...persisted, defaultModel: undefined };
+      return structuredClone(persisted);
     },
   };
   return {
     harness,
-    current: () => config,
+    current: () => persisted,
     setConfigCalls,
     removeCalls,
   };
@@ -288,6 +299,51 @@ describe('kimi provider add', () => {
     // The stale model alias must be gone; the registry's alias must be in.
     expect(current().models?.['kohub/stale-model']).toBeUndefined();
     expect(current().models?.['kohub/claude-opus-4-7']).toBeDefined();
+  });
+
+  it('preserves newly-imported providers when a later registry entry replaces an existing id', async () => {
+    // Regression test for the codex P1: `harness.removeProvider` re-reads
+    // from disk on each call, so applying the loop body without flushing
+    // would silently drop providers added earlier in the same iteration.
+    // The handler now removes every stale id up front in a single batch.
+    mockRegistryFetch();
+    const initial: KimiConfig = {
+      providers: {
+        // The registry will replace this one.
+        'kohub-responses': {
+          type: 'openai_responses',
+          baseUrl: 'https://stale.example.test/v1',
+          apiKey: 'old',
+        },
+      },
+      models: {
+        'kohub-responses/legacy-model': {
+          provider: 'kohub-responses',
+          model: 'legacy-model',
+          maxContextSize: 1024,
+          capabilities: [],
+        },
+      },
+    } as unknown as KimiConfig;
+    const { harness, current } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleProviderAdd(deps, REGISTRY_URL, { apiKey: 'sk-fresh' }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    const final = current();
+    // BOTH providers must end up in the final config — `kohub` was newly
+    // added in the loop, `kohub-responses` was replaced. The old bug dropped
+    // `kohub` because the second iteration's `removeProvider` reloaded a
+    // disk-backed config that had not yet been persisted with `kohub`.
+    expect(final.providers['kohub']).toBeDefined();
+    expect(final.providers['kohub-responses']).toBeDefined();
+    expect(final.providers['kohub-responses']?.apiKey).toBe('sk-fresh');
+    expect(final.models?.['kohub/claude-opus-4-7']).toBeDefined();
+    expect(final.models?.['kohub-responses/gpt-5.5']).toBeDefined();
+    expect(final.models?.['kohub-responses/legacy-model']).toBeUndefined();
   });
 
   it('reads the api key from KIMI_REGISTRY_API_KEY when --api-key is omitted', async () => {
@@ -633,6 +689,73 @@ describe('kimi provider catalog add', () => {
     const err = stderr.join('');
     expect(err).toContain('"does-not-exist" is not in provider "anthropic"');
     expect(err).toContain('kimi provider catalog list anthropic');
+  });
+
+  it('preserves an existing default_model when re-importing the same provider without --default-model', async () => {
+    // Regression test for the codex P2: `removeProvider` clears
+    // `defaultModel` if it pointed at one of the provider's aliases. The
+    // handler must capture the previous default BEFORE calling
+    // `removeProvider`, otherwise rotating the api key on an already-
+    // configured provider would silently wipe the user's chosen default.
+    mockRegistryFetch(CATALOG_BODY);
+    const initial: KimiConfig = {
+      providers: {
+        anthropic: {
+          type: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          apiKey: 'sk-old',
+        },
+      },
+      models: {
+        'anthropic/claude-opus-4-7': {
+          provider: 'anthropic',
+          model: 'claude-opus-4-7',
+          maxContextSize: 200_000,
+          capabilities: ['tool_use', 'thinking', 'image_in'],
+        },
+      },
+      defaultModel: 'anthropic/claude-opus-4-7',
+      defaultThinking: true,
+    } as unknown as KimiConfig;
+    const { harness, current } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'anthropic', { apiKey: 'sk-rotated' }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().providers['anthropic']?.apiKey).toBe('sk-rotated');
+    // Previous default and thinking flag must survive the re-import.
+    expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
+    expect(current().defaultThinking).toBe(true);
+  });
+
+  it('preserves default_thinking when --default-model is supplied to a thinking-capable model', async () => {
+    // Regression test for the codex P2: `applyCatalogProvider` always
+    // assigns `defaultThinking` from `options.thinking`. Hardcoding `false`
+    // silently disabled thinking even when the user previously had it on
+    // and is just importing a known provider. The handler now threads the
+    // previous value through.
+    mockRegistryFetch(CATALOG_BODY);
+    const initial: KimiConfig = {
+      providers: {},
+      defaultThinking: true,
+    } as unknown as KimiConfig;
+    const { harness, current, setConfigCalls } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'anthropic', {
+        apiKey: 'sk-ant',
+        defaultModel: 'claude-opus-4-7',
+      }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
+    expect(current().defaultThinking).toBe(true);
+    expect(setConfigCalls[0]?.defaultThinking).toBe(true);
   });
 
   it('falls back to KIMI_REGISTRY_API_KEY when --api-key is omitted', async () => {
