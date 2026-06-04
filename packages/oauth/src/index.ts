@@ -46,6 +46,8 @@ export {
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
   provisionManagedKimiCodeConfig,
+  resolveKimiCodeOAuthKey,
+  resolveKimiCodeOAuthRef,
 } from './managed-kimi-code';
 export type {
   FetchManagedKimiCodeModelsOptions,
@@ -55,6 +57,7 @@ export type {
   ManagedKimiCodeProvisionResult,
   ManagedKimiConfigAdapter,
   ManagedKimiConfigShape,
+  ManagedKimiOAuthRef,
   ProvisionManagedKimiCodeConfigOptions,
 } from './managed-kimi-code';
 

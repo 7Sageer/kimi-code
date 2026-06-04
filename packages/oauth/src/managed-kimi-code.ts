@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto';
+
 import { readApiErrorMessage } from './api-error';
-import { kimiCodeBaseUrl } from './managed-usage';
+import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
+import { OAuthUnauthorizedError } from './errors';
+import { DEFAULT_KIMI_CODE_BASE_URL, kimiCodeBaseUrl } from './managed-usage';
 import { isRecord } from './utils';
 
 export const KIMI_CODE_PLATFORM_ID = 'kimi-code';
 export const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 export const KIMI_CODE_OAUTH_KEY = 'oauth/kimi-code';
+const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = 'oauth/kimi-code-env-';
 
 export interface ManagedKimiCodeModelInfo {
   readonly id: string;
@@ -45,7 +50,8 @@ export interface ManagedKimiCodeCleanupResult {
 
 export interface ManagedKimiOAuthRef {
   readonly storage: 'file';
-  readonly key: typeof KIMI_CODE_OAUTH_KEY;
+  readonly key: string;
+  readonly oauthHost?: string | undefined;
 }
 
 export interface ManagedKimiProviderConfig {
@@ -94,6 +100,8 @@ export interface ManagedKimiConfigAdapter<TConfig> {
     input: {
       readonly models: readonly ManagedKimiCodeModelInfo[];
       readonly baseUrl?: string | undefined;
+      readonly oauthKey?: string | undefined;
+      readonly oauthHost?: string | undefined;
       readonly preserveDefaultModel?: boolean | undefined;
     },
   ): ManagedKimiCodeApplyResult;
@@ -105,6 +113,8 @@ export interface ProvisionManagedKimiCodeConfigOptions<TConfig> {
   readonly adapter: ManagedKimiConfigAdapter<TConfig>;
   readonly accessToken: string;
   readonly baseUrl?: string | undefined;
+  readonly oauthKey?: string | undefined;
+  readonly oauthHost?: string | undefined;
   readonly preserveDefaultModel?: boolean | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
 }
@@ -129,6 +139,77 @@ function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undef
 
 function defaultBaseUrl(baseUrl: string | undefined): string {
   return (baseUrl ?? kimiCodeBaseUrl()).replace(/\/+$/, '');
+}
+
+function normalizeEndpoint(value: string): string {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function persistedOAuthHost(options: {
+  readonly key: string;
+  readonly oauthHost?: string | undefined;
+}): string | undefined {
+  const oauthHost = options.oauthHost;
+  const normalized = normalizeEndpoint(oauthHost ?? DEFAULT_KIMI_CODE_OAUTH_HOST);
+  if (
+    options.key === KIMI_CODE_OAUTH_KEY &&
+    normalized === normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST)
+  ) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function managedOAuthRef(options: {
+  readonly key: string;
+  readonly oauthHost?: string | undefined;
+}): ManagedKimiOAuthRef {
+  const oauthHost = persistedOAuthHost(options);
+  return {
+    storage: 'file',
+    key: options.key,
+    oauthHost,
+  };
+}
+
+export function resolveKimiCodeOAuthKey(options: {
+  readonly oauthHost?: string | undefined;
+  readonly baseUrl?: string | undefined;
+}): string {
+  const oauthHost = normalizeEndpoint(options.oauthHost ?? DEFAULT_KIMI_CODE_OAUTH_HOST);
+  const baseUrl = defaultBaseUrl(options.baseUrl);
+  const defaultOauthHost = normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST);
+  const defaultApiBaseUrl = normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL);
+
+  if (oauthHost === defaultOauthHost && baseUrl === defaultApiBaseUrl) {
+    return KIMI_CODE_OAUTH_KEY;
+  }
+
+  const digest = createHash('sha256')
+    .update(JSON.stringify({ oauthHost, baseUrl }))
+    .digest('hex')
+    .slice(0, 16);
+  return `${KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX}${digest}`;
+}
+
+/**
+ * Resolve the full managed-Kimi-Code OAuth ref (credential storage key +
+ * persisted host) for an (oauthHost, baseUrl) environment.
+ *
+ * Single source of truth for "which credential slot does this environment map
+ * to". Login, provisioning, and the runtime provider all derive their ref
+ * through here, so the slot a token is written to always matches the slot it
+ * is later read from — preventing the env-mismatch credential mix-ups this
+ * scoping is meant to fix.
+ */
+export function resolveKimiCodeOAuthRef(options: {
+  readonly oauthHost?: string | undefined;
+  readonly baseUrl?: string | undefined;
+}): ManagedKimiOAuthRef {
+  return managedOAuthRef({
+    key: resolveKimiCodeOAuthKey(options),
+    oauthHost: options.oauthHost,
+  });
 }
 
 function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
@@ -168,12 +249,16 @@ export async function fetchManagedKimiCodeModels(
     },
   });
   if (!response.ok) {
-    throw new Error(
-      await readApiErrorMessage(
-        response,
-        `Failed to list Kimi Code models (HTTP ${response.status}).`,
-      ),
+    const message = await readApiErrorMessage(
+      response,
+      `Failed to list Kimi Code models (HTTP ${response.status}).`,
     );
+    if (response.status === 401 || response.status === 402 || response.status === 403) {
+      throw new OAuthUnauthorizedError(
+        `Kimi Code models endpoint ${baseUrl} rejected OAuth credentials: ${message}`,
+      );
+    }
+    throw new Error(message);
   }
   const payload: unknown = await response.json();
   if (!isRecord(payload) || !Array.isArray(payload['data'])) {
@@ -189,6 +274,8 @@ export function applyManagedKimiCodeConfig(
   options: {
     readonly models: readonly ManagedKimiCodeModelInfo[];
     readonly baseUrl?: string | undefined;
+    readonly oauthKey?: string | undefined;
+    readonly oauthHost?: string | undefined;
     readonly preserveDefaultModel?: boolean | undefined;
   },
 ): ManagedKimiCodeApplyResult {
@@ -200,6 +287,10 @@ export function applyManagedKimiCodeConfig(
   }
 
   const baseUrl = defaultBaseUrl(options.baseUrl);
+  const oauth =
+    options.oauthKey !== undefined
+      ? managedOAuthRef({ key: options.oauthKey, oauthHost: options.oauthHost })
+      : resolveKimiCodeOAuthRef({ baseUrl, oauthHost: options.oauthHost });
   const existingModels = config.models ?? {};
   const selectedDefault = selectDefaultModel(config, options.models, {
     preserveExisting: options.preserveDefaultModel === true,
@@ -209,7 +300,7 @@ export function applyManagedKimiCodeConfig(
     type: 'kimi',
     baseUrl,
     apiKey: '',
-    oauth: { storage: 'file', key: KIMI_CODE_OAUTH_KEY },
+    oauth,
   };
 
   for (const [key, model] of Object.entries(existingModels)) {
@@ -235,12 +326,12 @@ export function applyManagedKimiCodeConfig(
     moonshotSearch: {
       baseUrl: `${baseUrl}/search`,
       apiKey: '',
-      oauth: { storage: 'file', key: KIMI_CODE_OAUTH_KEY },
+      oauth,
     },
     moonshotFetch: {
       baseUrl: `${baseUrl}/fetch`,
       apiKey: '',
-      oauth: { storage: 'file', key: KIMI_CODE_OAUTH_KEY },
+      oauth,
     },
   };
 
@@ -388,6 +479,8 @@ export async function provisionManagedKimiCodeConfig<TConfig>(
   const applied = options.adapter.apply(config, {
     models,
     baseUrl: options.baseUrl,
+    oauthKey: options.oauthKey,
+    oauthHost: options.oauthHost,
     preserveDefaultModel: options.preserveDefaultModel,
   });
   await options.adapter.write(config);

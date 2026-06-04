@@ -10,8 +10,10 @@ import {
   filterModelsByPrefix,
   getOpenPlatformById,
   isOpenPlatformId,
+  kimiCodeBaseUrl,
   removeCustomRegistryProvider,
   removeOpenPlatformConfig,
+  resolveKimiCodeOAuthRef,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -54,6 +56,15 @@ function readCustomRegistrySource(provider: ProviderConfig): CustomRegistrySourc
 
 function asManaged(config: KimiConfig): ManagedKimiConfigShape {
   return config as unknown as ManagedKimiConfigShape;
+}
+
+function managedRuntimeBaseUrl(configuredBaseUrl: string | undefined): string | undefined {
+  if (process.env['KIMI_CODE_BASE_URL'] !== undefined) return kimiCodeBaseUrl();
+  return configuredBaseUrl;
+}
+
+function envOAuthHost(): string | undefined {
+  return process.env['KIMI_CODE_OAUTH_HOST'] ?? process.env['KIMI_OAUTH_HOST'];
 }
 
 function collectModelIdsForProvider(config: KimiConfig, providerId: string): Set<string> {
@@ -120,13 +131,15 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
     managedProvider.oauth !== undefined
   ) {
     try {
-      const accessToken = await host.resolveOAuthToken(
-        KIMI_CODE_PROVIDER_NAME,
-        managedProvider.oauth,
-      );
+      const baseUrl = managedRuntimeBaseUrl(managedProvider.baseUrl);
+      const oauth = resolveKimiCodeOAuthRef({
+        oauthHost: envOAuthHost() ?? managedProvider.oauth.oauthHost,
+        baseUrl,
+      });
+      const accessToken = await host.resolveOAuthToken(KIMI_CODE_PROVIDER_NAME, oauth);
       const models = await fetchManagedKimiCodeModels({
         accessToken,
-        baseUrl: managedProvider.baseUrl,
+        baseUrl,
       });
       if (models.length > 0) {
         const beforeIds = collectModelIdsForProvider(config, KIMI_CODE_PROVIDER_NAME);
@@ -140,7 +153,9 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
           clearManagedKimiCodeConfig(asManaged(config));
           applyManagedKimiCodeConfig(asManaged(config), {
             models,
-            baseUrl: managedProvider.baseUrl,
+            baseUrl,
+            oauthKey: oauth.key,
+            oauthHost: oauth.oauthHost,
             preserveDefaultModel: true,
           });
           await host.setConfig({
