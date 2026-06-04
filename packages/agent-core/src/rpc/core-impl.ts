@@ -23,8 +23,9 @@ import {
   type MoonshotServiceConfig,
 } from '../config';
 import {
-  flags,
-  type ExperimentalFlagMap,
+  FLAG_DEFINITIONS,
+  FlagResolver,
+  type ExperimentalFeatureState,
 } from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
@@ -135,6 +136,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private pluginsReady: Promise<void>;
   private pluginsLoadError: Error | undefined;
   private readonly appVersion: string | undefined;
+  private readonly experimentalFlags: FlagResolver;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
@@ -155,6 +157,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.appVersion = options.appVersion;
     ensureKimiHome(this.homeDir);
     this.config = loadRuntimeConfig(this.configPath);
+    this.experimentalFlags = new FlagResolver(
+      process.env,
+      FLAG_DEFINITIONS,
+      this.config.experimental,
+    );
     this.sessionStore = new SessionStore(this.homeDir);
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
@@ -164,7 +171,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.pluginsReady = this.plugins.load().catch((error: unknown) => {
       this.pluginsLoadError = error instanceof Error ? error : new Error(String(error));
     });
-    log.info('experimental flags enabled', { flags: flags.enabledIds() });
+    log.info('experimental flags enabled', { flags: this.experimentalFlags.enabledIds() });
 
     this.sdk = rpcClient(this);
   }
@@ -215,6 +222,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       permissionRules: config.permission?.rules,
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
+      experimentalFlags: this.experimentalFlags,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       pluginSessionStarts,
       appVersion: this.appVersion,
@@ -259,8 +267,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return { version: getCoreVersion() };
   }
 
-  getExperimentalFlags(): ExperimentalFlagMap {
-    return flags.snapshot();
+  getExperimentalFeatures(): readonly ExperimentalFeatureState[] {
+    return this.experimentalFlags.explainAll();
   }
 
   async closeSession({ sessionId }: CloseSessionPayload): Promise<void> {
@@ -302,6 +310,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       permissionRules: config.permission?.rules,
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
+      experimentalFlags: this.experimentalFlags,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       initializeMainAgent: false,
       pluginSessionStarts,
@@ -408,7 +417,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async getKimiConfig(input?: GetKimiConfigPayload): Promise<KimiConfig> {
     if (input?.reload) {
-      this.config = loadRuntimeConfig(this.configPath);
+      this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
     }
     return this.config;
   }
@@ -416,7 +425,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
     const config = mergeConfigPatch(readConfigFile(this.configPath), input);
     await writeConfigFile(this.configPath, config);
-    return this.config = loadRuntimeConfig(this.configPath);
+    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
   }
 
   async removeKimiProvider(input: RemoveKimiProviderPayload): Promise<KimiConfig> {
@@ -447,7 +456,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
 
     await writeConfigFile(this.configPath, config);
-    return this.config = loadRuntimeConfig(this.configPath);
+    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -765,7 +774,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         ...pluginServers,
       },
     };
-  }  private sessionApi(sessionId: string): SessionAPIImpl {
+  }
+
+  private sessionApi(sessionId: string): SessionAPIImpl {
     const session = this.sessions.get(sessionId);
     if (session === undefined) {
       throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`, {
@@ -776,7 +787,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private reloadProviderManager(): KimiConfig {
-    return this.config = loadRuntimeConfig(this.configPath);
+    return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
+  }
+
+  private setRuntimeConfig(config: KimiConfig): KimiConfig {
+    this.config = config;
+    this.experimentalFlags.setConfigOverrides(config.experimental);
+    return this.config;
   }
 
   private clearRuntimeCache(): void {
