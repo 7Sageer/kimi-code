@@ -332,8 +332,46 @@ describe('OpenAILegacyChatProvider', () => {
       expect(messages[3]).toEqual({
         role: 'user',
         content: [
-          { type: 'text', text: 'Attached image(s) from tool result:' },
+          { type: 'text', text: 'Attached media from tool result:' },
           { type: 'image_url', image_url: { url: 'https://example.com/image.png' } },
+        ],
+      });
+    });
+
+    it('tool call with audio result keeps the tool result textual and reattaches audio as user input', async () => {
+      // Same contract as the image case: a tool result whose only payload is
+      // audio must not vanish. The tool message carries the placeholder and
+      // the audio part is reattached as a follow-up user message.
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Say hi' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_tts', name: 'tts', arguments: '{}' }],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'audio_url', audioUrl: { url: 'https://example.com/hi.mp3' } },
+          ] satisfies ContentPart[],
+          toolCallId: 'call_tts',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const messages = body['messages'] as Record<string, unknown>[];
+      expect(messages[2]).toEqual({
+        role: 'tool',
+        content: '(see attached media)',
+        tool_call_id: 'call_tts',
+      });
+      expect(messages[3]).toEqual({
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Attached media from tool result:' },
+          { type: 'audio_url', audio_url: { url: 'https://example.com/hi.mp3' } },
         ],
       });
     });
@@ -388,12 +426,12 @@ describe('OpenAILegacyChatProvider', () => {
             },
           ],
         },
-        { role: 'tool', content: '(see attached image)', tool_call_id: 'call_first' },
+        { role: 'tool', content: '(see attached media)', tool_call_id: 'call_first' },
         { role: 'tool', content: 'second', tool_call_id: 'call_second' },
         {
           role: 'user',
           content: [
-            { type: 'text', text: 'Attached image(s) from tool result:' },
+            { type: 'text', text: 'Attached media from tool result:' },
             { type: 'image_url', image_url: { url: 'https://example.com/first.png' } },
             { type: 'image_url', image_url: { url: 'https://example.com/second.png' } },
           ],

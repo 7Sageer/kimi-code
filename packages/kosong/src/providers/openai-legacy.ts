@@ -19,8 +19,11 @@ import {
   convertToolMessageContent,
   extractUsage,
   isFunctionToolCall,
+  isMediaPart,
   normalizeOpenAIFinishReason,
   type OpenAIContentPart,
+  TOOL_RESULT_MEDIA_PLACEHOLDER,
+  TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
   reasoningEffortToThinkingEffort,
   thinkingEffortToReasoningEffort,
@@ -50,8 +53,6 @@ const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
 };
-const TOOL_RESULT_IMAGE_PROMPT = 'Attached image(s) from tool result:';
-const TOOL_RESULT_IMAGE_PLACEHOLDER = '(see attached image)';
 
 function extractReasoningContent(
   source: unknown,
@@ -225,41 +226,34 @@ function convertToolMessageContentForChat(
   conversion: ToolMessageConversion,
 ): string | OpenAIContentPart[] {
   const content = convertToolMessageContent(message, conversion);
-  if (
-    typeof content === 'string' &&
-    content.length === 0 &&
-    message.content.some((part) => part.type === 'image_url')
-  ) {
-    return TOOL_RESULT_IMAGE_PLACEHOLDER;
+  if (typeof content === 'string' && content.length === 0 && message.content.some(isMediaPart)) {
+    return TOOL_RESULT_MEDIA_PLACEHOLDER;
   }
   return content;
 }
 
-function toolResultImageParts(message: Message): OpenAIContentPart[] {
-  const images: OpenAIContentPart[] = [];
+function toolResultMediaParts(message: Message): OpenAIContentPart[] {
+  const media: OpenAIContentPart[] = [];
   for (const part of message.content) {
-    if (part.type !== 'image_url') continue;
-    images.push({
-      type: 'image_url',
-      image_url:
-        part.imageUrl.id === undefined
-          ? { url: part.imageUrl.url }
-          : { url: part.imageUrl.url, id: part.imageUrl.id },
-    });
+    if (!isMediaPart(part)) continue;
+    const converted = convertContentPart(part);
+    if (converted !== null) {
+      media.push(converted);
+    }
   }
-  return images;
+  return media;
 }
 
-function appendToolResultImagesMessage(
+function appendToolResultMediaMessage(
   messages: OpenAIMessage[],
-  pendingToolResultImages: OpenAIContentPart[],
+  pendingToolResultMedia: OpenAIContentPart[],
 ): void {
-  if (pendingToolResultImages.length === 0) return;
+  if (pendingToolResultMedia.length === 0) return;
   messages.push({
     role: 'user',
-    content: [{ type: 'text', text: TOOL_RESULT_IMAGE_PROMPT }, ...pendingToolResultImages],
+    content: [{ type: 'text', text: TOOL_RESULT_MEDIA_PROMPT }, ...pendingToolResultMedia],
   });
-  pendingToolResultImages.length = 0;
+  pendingToolResultMedia.length = 0;
 }
 
 function convertHistoryMessages(
@@ -268,19 +262,19 @@ function convertHistoryMessages(
   toolMessageConversion: ToolMessageConversion,
 ): OpenAIMessage[] {
   const messages: OpenAIMessage[] = [];
-  const pendingToolResultImages: OpenAIContentPart[] = [];
+  const pendingToolResultMedia: OpenAIContentPart[] = [];
 
   for (const msg of history) {
     if (msg.role !== 'tool') {
-      appendToolResultImagesMessage(messages, pendingToolResultImages);
+      appendToolResultMediaMessage(messages, pendingToolResultMedia);
     }
     messages.push(convertMessage(msg, reasoningKey, toolMessageConversion));
     if (msg.role === 'tool') {
-      pendingToolResultImages.push(...toolResultImageParts(msg));
+      pendingToolResultMedia.push(...toolResultMediaParts(msg));
     }
   }
 
-  appendToolResultImagesMessage(messages, pendingToolResultImages);
+  appendToolResultMediaMessage(messages, pendingToolResultMedia);
   return messages;
 }
 export class OpenAILegacyStreamedMessage implements StreamedMessage {
