@@ -204,6 +204,9 @@ function resolveModelCapabilities(
     video_in: declared.has('video_in') || detected.video_in,
     audio_in: declared.has('audio_in') || detected.audio_in,
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
+    ...(declared.has('always_thinking') || detected.always_thinking === true
+      ? { always_thinking: true }
+      : {}),
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: alias.maxContextSize,
   };

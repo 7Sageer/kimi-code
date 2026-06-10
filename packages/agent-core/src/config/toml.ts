@@ -3,6 +3,7 @@ import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
 import { ErrorCodes, KimiError } from '#/errors';
+import { applyDetectedModelCapabilities } from './detected-capabilities';
 import { applyEnvModelConfig, stripEnvModelConfig } from './env-model';
 import {
   KimiConfigSchema,
@@ -72,15 +73,17 @@ export function readConfigFile(filePath: string): KimiConfig {
 
 /**
  * Load the config for runtime consumption: the on-disk config plus any model
- * synthesized from `KIMI_MODEL_*` environment variables. Use this everywhere a
- * value is assigned to the live runtime config; use the raw `readConfigFile`
- * for write-back paths so the synthesized model is never persisted.
+ * synthesized from `KIMI_MODEL_*` environment variables, with model
+ * capabilities detected from kosong's model knowledge merged in. Use this
+ * everywhere a value is assigned to the live runtime config; use the raw
+ * `readConfigFile` for write-back paths so the synthesized model and detected
+ * capabilities are never persisted.
  */
 export function loadRuntimeConfig(
   filePath: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): KimiConfig {
-  return applyEnvModelConfig(readConfigFile(filePath), env);
+  return applyDetectedModelCapabilities(applyEnvModelConfig(readConfigFile(filePath), env));
 }
 
 export function parseConfigString(tomlText: string, filePath = 'config.toml'): KimiConfig {

@@ -45,7 +45,11 @@ function capabilityToStrings(capability: ModelCapability): string[] | undefined 
   if (capability.image_in) caps.push('image_in');
   if (capability.video_in) caps.push('video_in');
   if (capability.audio_in) caps.push('audio_in');
-  if (capability.thinking) caps.push('thinking');
+  if (capability.always_thinking === true) {
+    caps.push('always_thinking');
+  } else if (capability.thinking) {
+    caps.push('thinking');
+  }
   if (capability.tool_use) caps.push('tool_use');
   return caps.length > 0 ? caps : undefined;
 }

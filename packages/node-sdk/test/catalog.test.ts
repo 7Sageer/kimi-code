@@ -65,6 +65,18 @@ describe('catalogModelToAlias', () => {
       displayName: 'M1',
     });
   });
+
+  it('materializes always_thinking instead of thinking for always-reasoning models', () => {
+    const alwaysThinking: CatalogModel = {
+      ...model,
+      capability: { ...model.capability, always_thinking: true },
+    };
+    expect(catalogModelToAlias('kimi', alwaysThinking).capabilities).toEqual([
+      'image_in',
+      'always_thinking',
+      'tool_use',
+    ]);
+  });
 });
 
 describe('applyCatalogProvider', () => {

@@ -29,8 +29,8 @@ const OPENAI_VISION_TOOL_PREFIXES = [
 ] as const;
 
 // Claude prefixes are grouped by capability set, not by version family:
-// a new model joins the group whose capability it matches (e.g. Fable sits
-// with Opus/Sonnet/Haiku 4), rather than getting a per-version group.
+// a new model joins the group whose capability it matches, rather than
+// getting a per-version group.
 
 // Vision + tool use, no thinking (-> ANTHROPIC_VISION_TOOL_CAPABILITY).
 const CLAUDE_VISION_TOOL_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
@@ -40,8 +40,11 @@ const CLAUDE_THINKING_VISION_TOOL_PREFIXES = [
   'claude-opus-4',
   'claude-sonnet-4',
   'claude-haiku-4',
-  'claude-fable',
 ] as const;
+
+// Vision + tool use + thinking that cannot be turned off
+// (-> ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY).
+const CLAUDE_ALWAYS_THINKING_VISION_TOOL_PREFIXES = ['claude-fable'] as const;
 
 const GEMINI_CATALOGUED_PREFIXES = [
   'gemini-1.5-pro',
@@ -93,6 +96,16 @@ const ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze
   video_in: false,
   audio_in: false,
   thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
+const ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: true,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  always_thinking: true,
   tool_use: true,
   max_context_tokens: 0,
 });
@@ -149,6 +162,10 @@ const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
     matches: (name) => hasPrefix(name, CLAUDE_THINKING_VISION_TOOL_PREFIXES),
     capability: ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
+  },
+  {
+    matches: (name) => hasPrefix(name, CLAUDE_ALWAYS_THINKING_VISION_TOOL_PREFIXES),
+    capability: ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY,
   },
 ];
 

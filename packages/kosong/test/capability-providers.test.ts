@@ -121,6 +121,12 @@ describe('AnthropicChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
+  it('claude-fable-5 → always_thinking; toggleable Claude 4 models are not', () => {
+    // Fable cannot run with thinking turned off; Opus 4 can.
+    expect(make('claude-fable-5').getCapability().always_thinking).toBe(true);
+    expect(make('claude-opus-4').getCapability().always_thinking).toBeUndefined();
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
