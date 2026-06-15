@@ -142,6 +142,27 @@ const B64_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA' +
   'DUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 describe('AnthropicChatProvider', () => {
+  it('does not read ANTHROPIC_API_KEY from process.env inside the adapter', () => {
+    const previousApiKey = process.env['ANTHROPIC_API_KEY'];
+    process.env['ANTHROPIC_API_KEY'] = 'env-key';
+
+    try {
+      const provider = new AnthropicChatProvider({
+        model: 'k25',
+        stream: false,
+      });
+
+      expect(Reflect.get(provider, '_apiKey')).toBeUndefined();
+      expect(Reflect.get(provider, '_client')).toBeUndefined();
+    } finally {
+      if (previousApiKey === undefined) {
+        delete process.env['ANTHROPIC_API_KEY'];
+      } else {
+        process.env['ANTHROPIC_API_KEY'] = previousApiKey;
+      }
+    }
+  });
+
   describe('message conversion', () => {
     it('simple user message with system prompt', async () => {
       const provider = createProvider();

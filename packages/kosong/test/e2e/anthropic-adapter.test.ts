@@ -2,7 +2,6 @@ import type { Message, StreamedMessagePart, ToolCall } from '#/message';
 import { AnthropicChatProvider } from '#/providers/anthropic';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
-import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 
 import { createFakeProviderHarness } from './fake-provider-harness';
@@ -21,10 +20,11 @@ async function collectParts(
   return parts;
 }
 
-function makeAnthropicProvider(): AnthropicChatProvider {
+function makeAnthropicProvider(baseUrl?: string): AnthropicChatProvider {
   return new AnthropicChatProvider({
     model: 'k25',
     apiKey: 'test-key',
+    baseUrl,
     defaultMaxTokens: 1024,
     stream: true,
   });
@@ -58,6 +58,9 @@ const MUL_TOOL: Tool = {
 
 describe('e2e: Anthropic adapter bridge', () => {
   it('sends the adapter request body and parses streamed text, tool use, and usage', async () => {
+    const previousAuthToken = process.env['ANTHROPIC_AUTH_TOKEN'];
+    process.env['ANTHROPIC_AUTH_TOKEN'] = 'env-auth-token';
+
     const harness = await createFakeProviderHarness();
     try {
       harness.route('POST', '/v1/messages', async (request, reply) => {
@@ -168,11 +171,7 @@ describe('e2e: Anthropic adapter bridge', () => {
         });
       });
 
-      const provider = makeAnthropicProvider();
-      (provider as any)._client = new Anthropic({
-        apiKey: 'test-key',
-        baseURL: harness.baseUrl,
-      });
+      const provider = makeAnthropicProvider(harness.baseUrl);
 
       const history: Message[] = [
         {
@@ -209,7 +208,13 @@ describe('e2e: Anthropic adapter bridge', () => {
       } satisfies TokenUsage);
 
       expect(harness.requests).toHaveLength(1);
+      expect(harness.requests[0]!.headers['authorization']).toBeUndefined();
     } finally {
+      if (previousAuthToken === undefined) {
+        delete process.env['ANTHROPIC_AUTH_TOKEN'];
+      } else {
+        process.env['ANTHROPIC_AUTH_TOKEN'] = previousAuthToken;
+      }
       await harness.close();
     }
   });

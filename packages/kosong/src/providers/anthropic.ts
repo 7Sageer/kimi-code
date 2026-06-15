@@ -872,8 +872,8 @@ export class AnthropicChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
     this._adaptiveThinking = options.adaptiveThinking;
-    const apiKey = options.apiKey ?? process.env['ANTHROPIC_API_KEY'];
-    this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
+    this._apiKey =
+      options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
     this._baseUrl = options.baseUrl;
     this._defaultHeaders = options.defaultHeaders;
     this._clientFactory = options.clientFactory;
@@ -1080,6 +1080,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _buildClient(apiKey: string): Anthropic {
     return new Anthropic({
       apiKey,
+      authToken: null,
       baseURL: this._baseUrl,
       defaultHeaders: this._defaultHeaders,
     });
