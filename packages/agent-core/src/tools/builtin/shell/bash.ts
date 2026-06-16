@@ -123,6 +123,14 @@ function normalizeTimeoutMs(timeout: number | undefined, isBackground: boolean):
   return Math.min(value, timeoutCapS(isBackground)) * MS_PER_SECOND;
 }
 
+async function disposeProcess(proc: KaosProcess): Promise<void> {
+  try {
+    await proc.dispose();
+  } catch {
+    /* best-effort cleanup */
+  }
+}
+
 function renderBashDescription(shellName: string): string {
   return renderPrompt(bashDescriptionTemplate, { ...SHELL_TIMEOUT_VARS, SHELL_NAME: shellName });
 }
@@ -288,16 +296,7 @@ export class BashTool implements BuiltinTool<BashInput> {
         }
       }
 
-      try {
-        proc.stdout.destroy();
-      } catch {
-        /* ignore */
-      }
-      try {
-        proc.stderr.destroy();
-      } catch {
-        /* ignore */
-      }
+      await disposeProcess(proc);
     };
 
     const onAbort = (): void => {
@@ -352,6 +351,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     } finally {
       clearTimeout(timeoutHandle);
       signal.removeEventListener('abort', onAbort);
+      await disposeProcess(proc);
     }
   }
 
@@ -402,6 +402,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       } catch {
         /* process already gone */
       }
+      await disposeProcess(proc);
       return {
         isError: true,
         output: error instanceof Error ? error.message : String(error),
