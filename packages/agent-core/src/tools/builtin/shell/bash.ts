@@ -36,6 +36,7 @@ import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
+import { isPrematureCloseError } from '../../support/stream';
 import bashDescriptionTemplate from './bash.md?raw';
 
 const MS_PER_SECOND = 1000;
@@ -465,13 +466,6 @@ async function readStreamIntoBuilder(
   const trailing = decoder.end();
   if (trailing.length > 0) onUpdate?.({ kind, text: trailing });
   builder.write(trailing);
-}
-
-function isPrematureCloseError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE'
-  );
 }
 
 function shellQuote(s: string): string {

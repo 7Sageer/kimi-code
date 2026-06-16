@@ -34,6 +34,7 @@ import { toInputJsonSchema } from '../../support/input-schema';
 import { ensureRgPath, rgUnavailableMessage } from '../../support/rg-locator';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
+import { isPrematureCloseError } from '../../support/stream';
 import type { WorkspaceConfig } from '../../support/workspace';
 import GREP_DESCRIPTION from './grep.md?raw';
 
@@ -987,11 +988,4 @@ async function readStreamWithCap(
     }
   }
   return { text: Buffer.concat(chunks).toString('utf8'), truncated };
-}
-
-function isPrematureCloseError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE'
-  );
 }
