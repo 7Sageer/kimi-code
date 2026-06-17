@@ -68,12 +68,15 @@ export class MicroCompaction {
     this.apply(nextCutoff);
     if (previousCutoff !== nextCutoff) {
       const effect = this.measureEffect(history, nextCutoff);
-      // Whole-context length before/after trimming, mirroring the
+      const previousEffect = this.measureEffect(history, previousCutoff);
+      const rawContextTokens = estimateTokensForMessages(history);
+      // Whole-context length before/after this cutoff change, mirroring the
       // `tokensBefore`/`tokensAfter` fields on `compaction_finished` so the
       // two compaction paths can be compared on the same axis.
-      const contextTokensBefore = estimateTokensForMessages(history);
+      const contextTokensBefore =
+        rawContextTokens - previousEffect.beforeTokens + previousEffect.afterTokens;
       const contextTokensAfter =
-        contextTokensBefore - effect.beforeTokens + effect.afterTokens;
+        rawContextTokens - effect.beforeTokens + effect.afterTokens;
       this.agent.telemetry.track('micro_compaction_finished', {
         ...config,
         ...effect,
