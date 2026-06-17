@@ -480,9 +480,14 @@ describe('MicroCompaction', () => {
       truncatedToolResultCount: 2,
       beforeTokens: expect.any(Number),
       afterTokens: expect.any(Number),
+      contextTokensBefore: expect.any(Number),
+      contextTokensAfter: expect.any(Number),
     });
     expect(numberProperty(event, 'beforeTokens')).toBeGreaterThan(
       numberProperty(event, 'afterTokens'),
+    );
+    expect(numberProperty(event, 'contextTokensBefore')).toBeGreaterThan(
+      numberProperty(event, 'contextTokensAfter'),
     );
 
     expect(ctx.agent.context.messages).toHaveLength(9);
