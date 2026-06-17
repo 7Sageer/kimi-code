@@ -2,7 +2,10 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
 import type { ContextMessage } from '../context';
-import { estimateTokensForContentParts } from '../../utils/tokens';
+import {
+  estimateTokensForContentParts,
+  estimateTokensForMessages,
+} from '../../utils/tokens';
 
 export interface MicroCompactionConfig {
   keepRecentMessages: number;
@@ -65,9 +68,17 @@ export class MicroCompaction {
     this.apply(nextCutoff);
     if (previousCutoff !== nextCutoff) {
       const effect = this.measureEffect(history, nextCutoff);
+      // Whole-context length before/after trimming, mirroring the
+      // `tokensBefore`/`tokensAfter` fields on `compaction_finished` so the
+      // two compaction paths can be compared on the same axis.
+      const contextTokensBefore = estimateTokensForMessages(history);
+      const contextTokensAfter =
+        contextTokensBefore - effect.beforeTokens + effect.afterTokens;
       this.agent.telemetry.track('micro_compaction_applied', {
         ...config,
         ...effect,
+        contextTokensBefore,
+        contextTokensAfter,
         previous_cutoff: previousCutoff,
         cutoff: nextCutoff,
         message_count: history.length,
