@@ -661,9 +661,9 @@ export class SubagentBatch<T> {
 /**
  * Resolve the optional AgentSwarm normal-phase concurrency cap from the environment.
  *
- * Returns `undefined` when the variable is unset/empty or holds a non-positive,
- * non-integer, or non-numeric value — a dirty value must never cap the swarm at
- * zero (which would deadlock it), so invalid input falls back to "no cap".
+ * Returns `undefined` when the variable is unset/empty. A present value must be a
+ * positive integer; invalid input fails fast so a misconfigured cap never silently
+ * reverts to the uncapped ramp.
  */
 export function resolveSwarmMaxConcurrency(
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -671,6 +671,10 @@ export function resolveSwarmMaxConcurrency(
   const raw = env[AGENT_SWARM_MAX_CONCURRENCY_ENV];
   if (raw === undefined || raw.trim() === '') return undefined;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) return undefined;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `${AGENT_SWARM_MAX_CONCURRENCY_ENV} must be a positive integer, got ${JSON.stringify(raw)}.`,
+    );
+  }
   return value;
 }

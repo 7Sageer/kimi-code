@@ -657,19 +657,12 @@ describe('resolveSwarmMaxConcurrency', () => {
     ).toBeUndefined();
   });
 
-  it('returns undefined for non-positive, non-integer, or non-numeric values', () => {
-    expect(
-      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '0' }),
-    ).toBeUndefined();
-    expect(
-      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '-1' }),
-    ).toBeUndefined();
-    expect(
-      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '2.5' }),
-    ).toBeUndefined();
-    expect(
-      resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: 'abc' }),
-    ).toBeUndefined();
+  it('throws for non-positive, non-integer, or non-numeric values', () => {
+    for (const raw of ['0', '-1', '2.5', 'abc']) {
+      expect(() =>
+        resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: raw }),
+      ).toThrow(/KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY.*positive integer/);
+    }
   });
 
   it('returns the integer for a positive integer value', () => {
