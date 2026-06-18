@@ -4,6 +4,7 @@ import type { TelemetryClient } from '../../telemetry';
 import type { ExecutableToolResult } from '../../loop/types';
 
 import { canonicalTelemetryArgs } from './canonical-args';
+import type { TelemetryMode } from './telemetry';
 
 const REMINDER_TEXT_1 =
   '\n\n<system-reminder>\n' +
@@ -133,9 +134,14 @@ export class ToolCallDeduplicator {
   private consecutiveKey: string | null = null;
   private consecutiveCount = 0;
   private readonly telemetry: TelemetryClient | undefined;
+  private readonly telemetryMode: TelemetryMode | undefined;
 
-  constructor(options?: { readonly telemetry?: TelemetryClient | undefined }) {
+  constructor(options?: {
+    readonly telemetry?: TelemetryClient | undefined;
+    readonly telemetryMode?: TelemetryMode | undefined;
+  }) {
     this.telemetry = options?.telemetry;
+    this.telemetryMode = options?.telemetryMode;
   }
 
   beginStep(): void {
@@ -251,6 +257,7 @@ export class ToolCallDeduplicator {
         tool_name: toolName,
         repeat_count: streak,
         action,
+        mode: this.telemetryMode,
       });
     }
 

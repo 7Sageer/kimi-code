@@ -21,6 +21,7 @@ export interface ChatWithRetryInput {
   readonly turnId: string;
   readonly currentStep: number;
   readonly stepUuid: string;
+  readonly telemetryMode?: 'agent' | 'plan' | undefined;
   readonly maxAttempts?: number;
   readonly log?: Logger | undefined;
 }
@@ -94,6 +95,13 @@ function paramsForAttempt(
       attempt === 1
         ? { turnStep }
         : { turnStep, attempt: `${String(attempt)}/${String(maxAttempts)}` },
+    telemetryFields: {
+      turnId: input.turnId,
+      step: input.currentStep,
+      mode: input.telemetryMode,
+      attemptNo: attempt,
+      maxAttempts,
+    },
   };
 }
 

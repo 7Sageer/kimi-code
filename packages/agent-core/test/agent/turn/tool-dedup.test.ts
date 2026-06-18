@@ -466,7 +466,7 @@ describe('ToolCallDeduplicator', () => {
   describe('repeat telemetry', () => {
     it('emits tool_call_repeat with the streak count starting at the second occurrence', async () => {
       const { client, events } = makeRecordingTelemetry();
-      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      const dedup = new ToolCallDeduplicator({ telemetry: client, telemetryMode: 'agent' });
       for (let i = 0; i < 3; i += 1) {
         dedup.beginStep();
         await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
@@ -475,6 +475,7 @@ describe('ToolCallDeduplicator', () => {
       const repeats = events.filter((e) => e.event === 'tool_call_repeat');
       expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2, 3]);
       expect(repeats.every((e) => e.properties?.['tool_name'] === 'Read')).toBe(true);
+      expect(repeats.every((e) => e.properties?.['mode'] === 'agent')).toBe(true);
     });
 
     it('does not emit telemetry on the first call', async () => {

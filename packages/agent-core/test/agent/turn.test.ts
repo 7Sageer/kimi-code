@@ -63,12 +63,157 @@ describe('Agent turn flow', () => {
     await ctx.untilTurnEnd();
 
     expect(records).toContainEqual({
+      event: 'input_submitted',
+      properties: { turn_id: 0, mode: 'agent' },
+    });
+    expect(records).toContainEqual({
       event: 'turn_started',
-      properties: { mode: 'agent' },
+      properties: { turn_id: 0, mode: 'agent' },
     });
     expect(records).toContainEqual({
       event: 'turn_interrupted',
-      properties: { mode: 'agent', at_step: 0 },
+      properties: { turn_id: 0, mode: 'agent', at_step: 0 },
+    });
+    expect(records).toContainEqual({
+      event: 'turn_ended',
+      properties: {
+        turn_id: 0,
+        mode: 'agent',
+        outcome: 'error',
+        duration_ms: expect.any(Number),
+      },
+    });
+  });
+
+  it('tracks successful turn and llm request telemetry', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure();
+    records.length = 0;
+
+    ctx.mockNextResponse({ type: 'text', text: 'Hello from telemetry' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+
+    expect(records).toContainEqual({
+      event: 'input_submitted',
+      properties: { turn_id: 0, mode: 'agent' },
+    });
+    expect(records).toContainEqual({
+      event: 'turn_started',
+      properties: { turn_id: 0, mode: 'agent' },
+    });
+    expect(records).toContainEqual({
+      event: 'llm_request',
+      properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 1,
+        mode: 'agent',
+        attempt_no: 1,
+        max_attempts: 3,
+        client_request_id: expect.any(String),
+        model: 'mock-model',
+        provider: 'kimi',
+        outcome: 'success',
+        retryable: false,
+        duration_ms: expect.any(Number),
+        first_token_latency_ms: expect.any(Number),
+        stream_duration_ms: expect.any(Number),
+        finish_reason: 'completed',
+        input_tokens: expect.any(Number),
+        output_tokens: expect.any(Number),
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+      }),
+    });
+    expect(records).toContainEqual({
+      event: 'turn_ended',
+      properties: {
+        turn_id: 0,
+        mode: 'agent',
+        outcome: 'success',
+        duration_ms: expect.any(Number),
+      },
+    });
+  });
+
+  it('tracks cancelled turn and llm request telemetry', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ generate: abortableGenerate, telemetry: recordingTelemetry(records) });
+    ctx.configure();
+
+    const stepStarted = ctx.once('turn.step.started');
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Cancel me' }] });
+    await stepStarted;
+    records.length = 0;
+
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    expect(records).toContainEqual({
+      event: 'llm_request',
+      properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 1,
+        mode: 'agent',
+        attempt_no: 1,
+        max_attempts: 3,
+        client_request_id: expect.any(String),
+        model: 'mock-model',
+        provider: 'kimi',
+        outcome: 'cancelled',
+        retryable: false,
+        duration_ms: expect.any(Number),
+      }),
+    });
+    const llmRequest = records.find((record) => record.event === 'llm_request');
+    expect(llmRequest?.properties).not.toHaveProperty('error_type');
+    expect(records).toContainEqual({
+      event: 'turn_ended',
+      properties: {
+        turn_id: 0,
+        mode: 'agent',
+        outcome: 'cancelled',
+        duration_ms: expect.any(Number),
+      },
+    });
+  });
+
+  it('propagates plan mode across turn telemetry', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure();
+    await ctx.agent.planMode.enter('telemetry-plan');
+    records.length = 0;
+
+    ctx.mockNextResponse({ type: 'text', text: 'Here is the plan.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Plan something' }] });
+    await ctx.untilTurnEnd();
+
+    expect(records).toContainEqual({
+      event: 'input_submitted',
+      properties: { turn_id: 0, mode: 'plan' },
+    });
+    expect(records).toContainEqual({
+      event: 'turn_started',
+      properties: { turn_id: 0, mode: 'plan' },
+    });
+    expect(records).toContainEqual({
+      event: 'llm_request',
+      properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 1,
+        mode: 'plan',
+        outcome: 'success',
+      }),
+    });
+    expect(records).toContainEqual({
+      event: 'turn_ended',
+      properties: expect.objectContaining({
+        turn_id: 0,
+        mode: 'plan',
+        outcome: 'success',
+      }),
     });
   });
 
@@ -96,6 +241,7 @@ describe('Agent turn flow', () => {
       properties: {
         turn_id: 0,
         step_no: 1,
+        mode: 'agent',
         tool_name: 'Bash',
         dup_type: 'same_step',
         args_hash: expect.any(String),
@@ -134,6 +280,7 @@ describe('Agent turn flow', () => {
       properties: {
         turn_id: 0,
         step_no: 2,
+        mode: 'agent',
         tool_name: 'Bash',
         dup_type: 'cross_step',
         args_hash: expect.any(String),
@@ -142,6 +289,11 @@ describe('Agent turn flow', () => {
     expect(records).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 2,
+        tool_call_id: 'call_dup_2',
+        mode: 'agent',
+        permission_mode: 'yolo',
         tool_name: 'Bash',
         outcome: 'success',
         dup_type: 'cross_step',
@@ -219,6 +371,11 @@ describe('Agent turn flow', () => {
     expect(records).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 1,
+        tool_call_id: 'call_missing',
+        mode: 'agent',
+        permission_mode: 'manual',
         tool_name: 'MissingTool',
         outcome: 'error',
         dup_type: 'normal',
@@ -1396,10 +1553,35 @@ describe('Agent turn flow', () => {
     if (statusCode === undefined) {
       expect(record?.properties).not.toHaveProperty('status_code');
     }
+
+    const llmRequest = records.find((candidate) => candidate.event === 'llm_request');
+    expect(llmRequest).toEqual({
+      event: 'llm_request',
+      properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 1,
+        mode: 'agent',
+        attempt_no: 1,
+        max_attempts: 1,
+        client_request_id: expect.any(String),
+        model: 'mock-model',
+        provider: 'kimi',
+        outcome: 'error',
+        retryable: expect.any(Boolean),
+        duration_ms: expect.any(Number),
+        error_type: errorType,
+      }),
+    });
+    if (statusCode !== undefined) {
+      expect(llmRequest?.properties).toMatchObject({ status_code: statusCode });
+    } else {
+      expect(llmRequest?.properties).not.toHaveProperty('status_code');
+    }
   });
 
   it('keeps transient retry handling with request-scoped OAuth auth', async () => {
     const { logger, entries } = captureLogs();
+    const records: TelemetryRecord[] = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthAgentOptions(async () => 'fresh-token');
     const generate: GenerateFn = async (
@@ -1419,10 +1601,16 @@ describe('Agent turn flow', () => {
       options?.onStreamEnd?.();
       return textResult('Recovered after retry');
     };
-    const ctx = testAgent({ ...oauthOptions, generate, log: logger });
+    const ctx = testAgent({
+      ...oauthOptions,
+      generate,
+      log: logger,
+      telemetry: recordingTelemetry(records),
+    });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
+    records.length = 0;
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
     const events = await ctx.untilTurnEnd();
@@ -1449,6 +1637,46 @@ describe('Agent turn flow', () => {
     expect(payloads[0]).toMatchObject({ turnStep: '0.1' });
     expect(payloads[0]).not.toHaveProperty('attempt');
     expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/3' });
+
+    const llmRequests = records.filter((record) => record.event === 'llm_request');
+    expect(llmRequests).toHaveLength(2);
+    expect(llmRequests[0]).toEqual({
+      event: 'llm_request',
+      properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 1,
+        mode: 'agent',
+        attempt_no: 1,
+        max_attempts: 3,
+        client_request_id: expect.any(String),
+        model: 'kimi-for-coding',
+        provider: 'google_genai',
+        outcome: 'error',
+        retryable: true,
+        error_type: 'network',
+        duration_ms: expect.any(Number),
+      }),
+    });
+    expect(llmRequests[1]).toEqual({
+      event: 'llm_request',
+      properties: expect.objectContaining({
+        turn_id: 0,
+        step_no: 1,
+        mode: 'agent',
+        attempt_no: 2,
+        max_attempts: 3,
+        client_request_id: expect.any(String),
+        model: 'kimi-for-coding',
+        provider: 'google_genai',
+        outcome: 'success',
+        retryable: false,
+        duration_ms: expect.any(Number),
+        finish_reason: 'completed',
+      }),
+    });
+    expect(llmRequests[0]?.properties?.['client_request_id']).not.toBe(
+      llmRequests[1]?.properties?.['client_request_id'],
+    );
   });
 
   it('force-refreshes OAuth credentials on video upload 401 and falls back to login_required when replay 401', async () => {

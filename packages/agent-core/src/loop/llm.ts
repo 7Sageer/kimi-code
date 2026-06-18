@@ -28,6 +28,14 @@ export interface LLMRequestLogFields {
   readonly attempt?: string;
 }
 
+export interface LLMTelemetryFields {
+  readonly turnId?: string;
+  readonly step?: number;
+  readonly mode?: 'agent' | 'plan';
+  readonly attemptNo?: number;
+  readonly maxAttempts?: number;
+}
+
 export interface LLMStreamTiming {
   readonly firstTokenLatencyMs: number;
   readonly streamDurationMs: number;
@@ -38,6 +46,7 @@ export interface LLMChatParams {
   tools: readonly Tool[];
   signal: AbortSignal;
   requestLogFields?: LLMRequestLogFields;
+  telemetryFields?: LLMTelemetryFields;
   onTextDelta?: ((delta: string) => void) | undefined;
   onThinkDelta?: ((delta: string) => void) | undefined;
   onToolCallDelta?: ((delta: ToolCallDelta) => void) | undefined;

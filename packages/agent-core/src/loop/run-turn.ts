@@ -38,6 +38,7 @@ export interface RunTurnInput {
   readonly tools?: readonly ExecutableTool[] | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
+  readonly telemetryMode?: 'agent' | 'plan' | undefined;
   readonly maxSteps?: number | undefined;
   readonly maxRetryAttempts?: number;
   readonly recordStepUsage?:
@@ -55,6 +56,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     tools,
     hooks,
     log,
+    telemetryMode,
     maxSteps,
     maxRetryAttempts,
     recordStepUsage: hostRecordStepUsage,
@@ -90,6 +92,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         tools,
         hooks,
         log,
+        telemetryMode,
         currentStep: steps,
         maxRetryAttempts,
         recordUsage: recordStepUsage,

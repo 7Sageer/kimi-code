@@ -226,6 +226,7 @@ export class Agent {
       provider,
       systemPrompt: this.config.systemPrompt,
       capability: this.config.modelCapabilities,
+      telemetry: this.telemetry,
       generate: this.generate,
       completionBudgetConfig,
     });

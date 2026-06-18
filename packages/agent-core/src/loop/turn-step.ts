@@ -38,6 +38,7 @@ export interface ExecuteLoopStepDeps {
   readonly tools?: readonly ExecutableTool[] | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
+  readonly telemetryMode?: 'agent' | 'plan' | undefined;
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
   readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
@@ -56,6 +57,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     tools,
     hooks,
     log,
+    telemetryMode,
     currentStep,
     maxRetryAttempts,
     recordUsage,
@@ -117,6 +119,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     currentStep,
     stepUuid,
+    telemetryMode,
     maxAttempts: maxRetryAttempts,
     log,
   });
