@@ -263,6 +263,45 @@ describe('KimiHarness.createSession transport link', () => {
     }
   });
 
+  it('does not let sessionStartedProperties override canonical session_started fields', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const records: TelemetryRecord[] = [];
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+      telemetry: recordingTelemetry(records),
+    });
+
+    try {
+      const session = await harness.createSession({
+        id: 'ses_reserved_keys',
+        workDir,
+        sessionStartedProperties: {
+          client_name: 'evil',
+          client_version: 'evil',
+          ui_mode: 'evil',
+          resumed: true,
+          extra: 'kept',
+        },
+      });
+
+      expect(records).toContainEqual({
+        event: 'session_started',
+        sessionId: session.id,
+        properties: {
+          client_name: 'kimi-code-cli',
+          client_version: '0.0.0-test',
+          ui_mode: 'shell',
+          resumed: false,
+          extra: 'kept',
+        },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('emits session_fork with the forked session context', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();

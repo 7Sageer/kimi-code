@@ -255,12 +255,14 @@ export class KimiHarness {
     sessionScoped?: TelemetryProperties,
   ): void {
     withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track('session_started', {
+      ...this.sessionStartedProperties,
+      ...sessionScoped,
+      // Canonical fields are owned by the harness and must win over any
+      // caller-supplied sessionStartedProperties that happen to share a key.
       client_name: this.identity?.userAgentProduct ?? null,
       client_version: this.identity?.version ?? null,
       ui_mode: this.uiMode,
       resumed,
-      ...this.sessionStartedProperties,
-      ...sessionScoped,
     });
   }
 }
