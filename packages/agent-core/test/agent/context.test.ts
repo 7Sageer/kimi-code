@@ -617,7 +617,7 @@ describe('Agent context', () => {
       },
     });
 
-    expect(ctx.agent.context.tokenCount).toBeGreaterThan(0);
+    expect(ctx.agent.context.tokenCount).toBeGreaterThan(1_000);
     expect(ctx.agent.context.tokenCountWithPending).toBeGreaterThanOrEqual(
       ctx.agent.context.tokenCount,
     );

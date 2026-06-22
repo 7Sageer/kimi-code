@@ -266,11 +266,12 @@ export class ContextMemory {
             this._tokenCount = totalUsage;
           } else {
             // The provider reported zero usage (e.g. content filter). Do not
-            // overwrite the accumulated context token count with 0; estimate
-            // from the messages covered by this step instead.
-            this._tokenCount = Math.max(
-              this._tokenCount,
-              estimateTokensForMessages(this._history.slice(0, coveredCount)),
+            // overwrite the accumulated context token count with 0; add an
+            // estimate for the newly covered messages so the invariant between
+            // _tokenCount and tokenCountCoveredMessageCount stays intact.
+            const previousCoveredCount = this.tokenCountCoveredMessageCount;
+            this._tokenCount += estimateTokensForMessages(
+              this._history.slice(previousCoveredCount, coveredCount),
             );
           }
           this.tokenCountCoveredMessageCount = coveredCount;
