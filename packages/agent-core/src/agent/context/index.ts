@@ -255,13 +255,25 @@ export class ContextMemory {
         this.openSteps.delete(event.uuid);
         if (event.usage !== undefined) {
           const openStepIndex = openStep === undefined ? -1 : this._history.indexOf(openStep);
-          this._tokenCount =
+          const coveredCount =
+            openStepIndex === -1 ? this._history.length : openStepIndex + 1;
+          const totalUsage =
             event.usage.inputCacheRead +
             event.usage.inputCacheCreation +
             event.usage.inputOther +
             event.usage.output;
-          this.tokenCountCoveredMessageCount =
-            openStepIndex === -1 ? this._history.length : openStepIndex + 1;
+          if (totalUsage > 0) {
+            this._tokenCount = totalUsage;
+          } else {
+            // The provider reported zero usage (e.g. content filter). Do not
+            // overwrite the accumulated context token count with 0; estimate
+            // from the messages covered by this step instead.
+            this._tokenCount = Math.max(
+              this._tokenCount,
+              estimateTokensForMessages(this._history.slice(0, coveredCount)),
+            );
+          }
+          this.tokenCountCoveredMessageCount = coveredCount;
         }
         this.flushDeferredMessagesIfToolExchangeClosed();
         return;

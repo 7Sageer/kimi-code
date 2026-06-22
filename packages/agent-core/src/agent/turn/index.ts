@@ -33,7 +33,7 @@ import {
   type LoopTurnInterruptedEvent,
   type LoopTurnStopReason,
 } from '../../loop/index';
-import type { AgentEvent, TurnEndedEvent } from '../../rpc';
+import type { AgentEvent, TurnEndedEvent, TurnEndReason } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
@@ -469,10 +469,12 @@ export class TurnFlow {
       } else {
         const stopReason = await this.runStepLoop(turnId, signal);
         completedStopReason = stopReason;
+        const reason: TurnEndReason =
+          stopReason === 'aborted' ? 'cancelled' : stopReason === 'filtered' ? 'filtered' : 'completed';
         ended = {
           type: 'turn.ended',
           turnId,
-          reason: stopReason === 'aborted' ? 'cancelled' : 'completed',
+          reason,
           durationMs: Date.now() - startedAt,
         };
       }

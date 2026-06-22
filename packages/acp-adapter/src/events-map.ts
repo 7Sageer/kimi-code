@@ -56,6 +56,9 @@ export function assistantDeltaToSessionUpdate(
  *   belong on the JSON-RPC error channel). Returning `end_turn` keeps the
  *   client unblocked; the caller is expected to log the `error` payload
  *   separately so the failure is observable in the agent logs.
+ * `filtered`  → `end_turn`: the provider's safety policy blocked the
+ *   response. Like `failed`, there is no ACP variant for this; the caller
+ *   should surface it through logs/notices rather than `stopReason`.
  */
 export function turnEndReasonToStopReason(reason: TurnEndReason): AcpStopReason {
   switch (reason) {
@@ -64,6 +67,7 @@ export function turnEndReasonToStopReason(reason: TurnEndReason): AcpStopReason 
     case 'cancelled':
       return 'cancelled';
     case 'failed':
+    case 'filtered':
       return 'end_turn';
   }
 }
