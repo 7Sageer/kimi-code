@@ -2,6 +2,7 @@ import { ErrorCodes, KimiError } from '#/errors';
 import type { McpServerStdioConfig } from '#/config/schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { isAbsolute, resolve } from 'node:path';
 
 import {
   buildRequestOptions,
@@ -18,6 +19,7 @@ export interface StdioMcpClientOptions {
   readonly clientName?: string;
   readonly clientVersion?: string;
   readonly toolCallTimeoutMs?: number;
+  readonly defaultCwd?: string;
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
@@ -60,7 +62,7 @@ export class StdioMcpClient implements MCPClient {
       command: config.command,
       args: config.args,
       env: mergeStdioEnv(config.env),
-      cwd: config.cwd,
+      cwd: resolveStdioCwd(config.cwd, options.defaultCwd),
       stderr: 'pipe',
     });
     // `stderr: 'pipe'` means we MUST drain the stream — otherwise the child
@@ -213,6 +215,12 @@ class BoundedTail {
   snapshot(): string {
     return this.buffer;
   }
+}
+
+function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | undefined): string | undefined {
+  if (configCwd === undefined) return defaultCwd;
+  if (defaultCwd !== undefined && !isAbsolute(configCwd)) return resolve(defaultCwd, configCwd);
+  return configCwd;
 }
 
 // Inherit the parent's env so PATH/HOME/etc. survive — otherwise `npx`/`uvx`
