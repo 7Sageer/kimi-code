@@ -699,8 +699,8 @@ describe('MicroCompaction', () => {
 
     expect(ctx.agent.context.messages).toHaveLength(1);
     expect(ctx.agent.context.messages[0]).toMatchObject({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'Summary.' }],
+      role: 'user',
+      content: [{ type: 'text', text: expect.stringContaining('Summary.') }],
     });
   });
 

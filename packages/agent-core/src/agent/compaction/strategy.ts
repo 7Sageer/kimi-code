@@ -7,9 +7,6 @@ export interface CompactionConfig {
   blockRatio: number;
   reservedContextSize: number;
   maxCompactionPerTurn: number;
-  maxRecentMessages: number;
-  maxRecentUserMessages: number;
-  maxRecentSizeRatio: number;
   minOverflowReductionRatio: number;
 }
 
@@ -18,9 +15,6 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   blockRatio: 0.85, // Same as triggerRatio to disable async compaction
   reservedContextSize: 50_000,
   maxCompactionPerTurn: Infinity,
-  maxRecentMessages: 4,
-  maxRecentUserMessages: Infinity,
-  maxRecentSizeRatio: 0.2,
   minOverflowReductionRatio: 0.05,
 };
 
@@ -64,58 +58,17 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     return reservedSize > 0 && reservedSize < this.maxSize && usedSize + reservedSize >= this.maxSize;
   }
 
-  computeCompactCount(messages: readonly Message[], source: CompactionSource): number {
-    // Return value: N messages to be compacted (0 means no compaction possible)
+  computeCompactCount(messages: readonly Message[], _source: CompactionSource): number {
+    // Claude Code parity: compaction replaces the entire history with the
+    // summary — no recent suffix is retained, matching Claude's default
+    // `/compact`. If the whole history does not fit in the model window, fall
+    // back to the largest safe prefix that fits; the remainder stays as a
+    // suffix, mirroring Claude's prompt-too-long head truncation.
+    //
+    // Return value: N messages to be compacted (0 means nothing to compact).
     // LLM Input: messages.slice(0, N) + [user:instruction]
-    // Preserved recent messages: messages.slice(N)
-
-    // Manual compaction
-    if (source === 'manual') {
-      for (let i = messages.length - 1; i > 0; i--) {
-        if (canSplitAfter(messages, i)) {
-          return this.fitCompactCountToWindow(messages, i + 1);
-        }
-      }
-      return 0;
-    }
-
-    // Auto compaction rules (in order of precedence):
-    // 1. The split after messages[N-1] must be safe per `canSplitAfter`:
-    //    messages[N-1] is not a user or asst-with-tool-calls, and the retained
-    //    suffix messages.slice(N) has no orphan tool result.
-    // 2. At least one recent message must be preserved
-    // 3. At most maxRecentMessages recent messages should be preserved
-    // 4. At most maxRecentUserMessages recent user messages should be preserved
-    // 5. At most maxRecentSizeRatio * maxSize recent messages should be preserved
-    // 6. N should be as small as possible
-
-    let recentMessages = 1;
-    let recentUserMessages = 0;
-    let recentSize = 0;
-    let bestN: number | undefined;
-
-    for (; recentMessages < messages.length; recentMessages++) {
-      const splitIndex = messages.length - recentMessages - 1;
-      const m2 = messages[messages.length - recentMessages]!;
-
-      if (m2.role === 'user') {
-        recentUserMessages++;
-      }
-      recentSize += estimateTokensForMessage(m2);
-
-      if (canSplitAfter(messages, splitIndex)) {
-        bestN = splitIndex + 1;
-      }
-
-      const reachesMax = recentMessages >= this.config.maxRecentMessages
-        || recentUserMessages >= this.config.maxRecentUserMessages
-        || recentSize >= this.maxSize * this.config.maxRecentSizeRatio;
-      if (reachesMax && bestN !== undefined) {
-        break;
-      }
-    }
-
-    return this.fitCompactCountToWindow(messages, bestN ?? 0);
+    // Preserved recent messages: messages.slice(N) (empty when everything fits)
+    return this.fitCompactCountToWindow(messages, messages.length);
   }
 
   reduceCompactOnOverflow(messages: readonly Message[]): number {

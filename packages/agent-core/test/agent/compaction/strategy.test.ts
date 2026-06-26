@@ -8,30 +8,7 @@ import { DefaultCompactionStrategy } from '../../../src/agent/compaction';
 import { estimateTokensForMessages } from '../../../src/utils/tokens';
 
 describe('DefaultCompactionStrategy', () => {
-  it('keeps an oversized trailing user message as recent', () => {
-    const strategy = testCompactionStrategy();
-    const messages = [
-      textMessage('user', 'old user'),
-      textMessage('assistant', 'old assistant'),
-      textMessage('user', `pending user ${'x'.repeat(1_200)}`),
-    ];
-
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
-  });
-
-  it('keeps consecutive trailing user messages as recent', () => {
-    const strategy = testCompactionStrategy();
-    const messages = [
-      textMessage('user', 'old user'),
-      textMessage('assistant', 'old assistant'),
-      textMessage('user', `pending user one ${'x'.repeat(1_200)}`),
-      textMessage('user', `pending user two ${'x'.repeat(1_200)}`),
-    ];
-
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
-  });
-
-  it('compacts the prefix when the trailing exchange itself is oversized', () => {
+  it('compacts the entire history when it fits within the window', () => {
     const strategy = testCompactionStrategy();
     const messages = [
       textMessage('user', 'old user'),
@@ -40,26 +17,33 @@ describe('DefaultCompactionStrategy', () => {
       textMessage('assistant', `recent assistant ${'x'.repeat(1_200)}`),
     ];
 
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
+    // Full replacement: when the whole history fits in the model window, the
+    // strategy compacts everything and keeps no recent suffix, matching
+    // Claude's default `/compact` — even though the trailing exchange itself
+    // is oversized.
+    expect(strategy.computeCompactCount(messages, 'auto')).toBe(messages.length);
+    expect(strategy.computeCompactCount(messages, 'manual')).toBe(messages.length);
   });
 
-  it('returns 0 when there is nothing to compact', () => {
+  it('compacts the entire history even when it ends with user messages', () => {
+    const strategy = testCompactionStrategy();
+    const messages = [
+      textMessage('user', 'old user'),
+      textMessage('assistant', 'old assistant'),
+      textMessage('user', 'pending user one'),
+      textMessage('user', 'pending user two'),
+    ];
+
+    expect(strategy.computeCompactCount(messages, 'auto')).toBe(messages.length);
+  });
+
+  it('returns 0 for an empty history', () => {
     const strategy = testCompactionStrategy();
     expect(strategy.computeCompactCount([], 'auto')).toBe(0);
-    expect(strategy.computeCompactCount([textMessage('user', 'only pending')], 'auto')).toBe(0);
-    expect(
-      strategy.computeCompactCount(
-        [
-          textMessage('user', 'a'),
-          textMessage('user', 'b'),
-          textMessage('user', 'c'),
-        ],
-        'auto',
-      ),
-    ).toBe(0);
+    expect(strategy.computeCompactCount([], 'manual')).toBe(0);
   });
 
-  it('returns 0 when no intermediate split exists and the last message is also unsplittable', () => {
+  it('compacts the entire history even when the trailing tool exchange is unresolved', () => {
     const strategy = testCompactionStrategy();
     const messages: Message[] = [
       textMessage('user', 'inspect'),
@@ -70,14 +54,21 @@ describe('DefaultCompactionStrategy', () => {
       },
     ];
 
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(0);
+    // No safe intermediate split exists, but the whole history fits in the
+    // window, so full replacement compacts everything. The unresolved exchange
+    // is trimmed from the summarizer prompt separately (see full.ts).
+    expect(strategy.computeCompactCount(messages, 'auto')).toBe(messages.length);
   });
 
-  it('does not split inside a parallel tool exchange', () => {
-    const strategy = testCompactionStrategy();
+  it('fits to a safe prefix without splitting inside a parallel tool exchange', () => {
+    const maxSize = 1_000;
+    const strategy = testCompactionStrategy(maxSize);
+    const bigUser = (label: string): Message => textMessage('user', `${label} ${'x'.repeat(1_200)}`);
+    const bigAssistant = (label: string): Message =>
+      textMessage('assistant', `${label} ${'x'.repeat(1_200)}`);
     const messages: Message[] = [
-      textMessage('user', 'old user'),
-      textMessage('assistant', 'old assistant'),
+      bigUser('old user'),
+      bigAssistant('old assistant'),
       textMessage('user', 'run both tools'),
       {
         role: 'assistant',
@@ -87,14 +78,39 @@ describe('DefaultCompactionStrategy', () => {
           { type: 'function', id: 'call_b', name: 'Lookup', arguments: '{}' },
         ],
       },
-      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCalls: [], toolCallId: 'call_a' },
-      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCalls: [], toolCallId: 'call_b' },
-      textMessage('user', 'next prompt'),
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: `a ${'x'.repeat(2_000)}` }],
+        toolCalls: [],
+        toolCallId: 'call_a',
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: `b ${'x'.repeat(2_000)}` }],
+        toolCalls: [],
+        toolCallId: 'call_b',
+      },
+      bigUser('next prompt'),
     ];
 
-    // The only valid split is before the parallel exchange (after 'old assistant'),
-    // never between tool_a and tool_b — that would leave tool_b as an orphan.
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
+    const count = strategy.computeCompactCount(messages, 'auto');
+
+    // The history exceeds the window, so the strategy falls back to the
+    // largest safe prefix that fits; the remainder stays as a suffix.
+    expect(count).toBeLessThan(messages.length);
+    expect(count).toBeGreaterThan(0);
+    expect(estimateTokensForMessages(messages.slice(0, count))).toBeLessThanOrEqual(maxSize);
+    // The split never lands inside the parallel tool exchange: it neither
+    // cuts between tool_a and tool_b (which would orphan tool_b) nor after the
+    // assistant that still has pending tool calls.
+    expect(count).not.toBe(4);
+    expect(count).not.toBe(5);
+    // The prefix ends at a safe boundary: not after a user message, not after
+    // an assistant with pending tool calls, and not before a tool result.
+    const cutMessage = messages[count - 1]!;
+    expect(cutMessage.role).not.toBe('user');
+    expect(cutMessage.role === 'assistant' && cutMessage.toolCalls.length > 0).toBe(false);
+    expect(messages[count]?.role).not.toBe('tool');
   });
 
   it('shrinks auto compaction input to fit the model window', () => {
@@ -140,9 +156,6 @@ describe('DefaultCompactionStrategy', () => {
       blockRatio: 0.85,
       reservedContextSize: 50_000,
       maxCompactionPerTurn: 3,
-      maxRecentMessages: 3,
-      maxRecentUserMessages: Infinity,
-      maxRecentSizeRatio: 0.2,
       minOverflowReductionRatio: 0.05,
     });
 
@@ -159,9 +172,6 @@ function testCompactionStrategy(maxSize: number = 1_000): DefaultCompactionStrat
     blockRatio: 0.85,
     reservedContextSize: 0,
     maxCompactionPerTurn: 3,
-    maxRecentMessages: 10,
-    maxRecentUserMessages: Infinity,
-    maxRecentSizeRatio: 0.2,
     minOverflowReductionRatio: 0.05,
   });
 }
@@ -172,9 +182,6 @@ function overflowOnlyCompactionStrategy(maxSize: number = 14): DefaultCompaction
     blockRatio: Infinity,
     reservedContextSize: 0,
     maxCompactionPerTurn: 3,
-    maxRecentMessages: 3,
-    maxRecentUserMessages: Infinity,
-    maxRecentSizeRatio: 0.2,
     minOverflowReductionRatio: 0.05,
   });
 }

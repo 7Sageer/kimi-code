@@ -177,14 +177,21 @@ export class ContextMemory {
     });
     this._history = [
       {
-        role: 'assistant',
+        role: 'user',
         content: [{ type: 'text', text: result.summary }],
         toolCalls: [],
         origin: { kind: 'compaction_summary' },
       },
+      ...(result.attachments ?? []),
       ...this._history.slice(result.compactedCount),
     ];
     this.openSteps.clear();
+    // A compaction that drops an in-flight tool exchange (full replacement)
+    // must not strand the tool-call ids in pendingToolResultIds — their results
+    // will never arrive, and any reminders deferred behind them would be stuck
+    // forever. Recompute the pending set from the new history and flush
+    // reminders whose owning exchange was compacted away.
+    this.rebuildPendingToolResultIds();
     this.flushDeferredMessagesIfToolExchangeClosed();
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
@@ -366,6 +373,24 @@ export class ContextMemory {
     }
     this.pushHistory(...this.deferredMessages);
     this.deferredMessages = [];
+  }
+
+  private rebuildPendingToolResultIds(): void {
+    const resolvedIds = new Set<string>();
+    for (const message of this._history) {
+      if (message.role === 'tool' && message.toolCallId !== undefined) {
+        resolvedIds.add(message.toolCallId);
+      }
+    }
+    this.pendingToolResultIds.clear();
+    for (const message of this._history) {
+      if (message.role !== 'assistant') continue;
+      for (const toolCall of message.toolCalls) {
+        if (toolCall.id !== undefined && !resolvedIds.has(toolCall.id)) {
+          this.pendingToolResultIds.add(toolCall.id);
+        }
+      }
+    }
   }
 
   private hasOpenToolExchange(): boolean {

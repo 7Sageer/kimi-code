@@ -224,7 +224,7 @@ function formatText(text: string): string {
   if (isPlanModeReminder(text)) {
     return '<plan-mode-reminder>';
   }
-  if (text.includes('<!-- Compression Priorities (in order) -->')) {
+  if (text.includes('create a detailed summary of the conversation so far')) {
     return '<compaction-instruction>';
   }
   return JSON.stringify(text);

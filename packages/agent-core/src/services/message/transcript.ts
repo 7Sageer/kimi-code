@@ -244,14 +244,22 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         const tailLength = Math.max(0, foldedLength - record.compactedCount);
         transcript.splice(Math.max(0, transcript.length - tailLength), 0, {
           message: {
-            role: 'assistant',
+            role: 'user',
             content: [{ type: 'text', text: record.summary }],
             toolCalls: [],
             origin: { kind: 'compaction_summary' },
           },
           time: record.time,
         });
-        foldedLength = tailLength + 1;
+        if (record.attachments !== undefined) {
+          for (const [offset, attachment] of record.attachments.entries()) {
+            transcript.splice(Math.max(0, transcript.length - tailLength) + 1 + offset, 0, {
+              message: attachment as MutableMessage,
+              time: record.time,
+            });
+          }
+        }
+        foldedLength = tailLength + 1 + (record.attachments?.length ?? 0);
         openSteps.clear();
         flushDeferredIfToolExchangeClosed();
         break;

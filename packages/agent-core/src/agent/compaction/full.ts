@@ -11,6 +11,7 @@ import {
   type TokenUsage,
   APIContextOverflowError,
   createUserMessage,
+  type Message,
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
@@ -19,7 +20,6 @@ import {
   retryBackoffDelays,
   sleepForRetry,
 } from '../../loop/retry';
-import { renderPrompt } from '../../utils/render-prompt';
 import {
   estimateTokens,
   estimateTokensForMessages,
@@ -28,8 +28,9 @@ import {
   applyCompletionBudget,
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
-import compactionInstructionTemplate from './compaction-instruction.md?raw';
-import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
+import { trimTrailingOpenToolExchange } from '../context/projector';
+import { getCompactPrompt, getCompactUserSummaryMessage } from './prompt';
+import { buildCompactionAttachments } from './attachments';
 import type { CompactionBeginData, CompactionResult } from './types';
 import {
   DEFAULT_COMPACTION_CONFIG,
@@ -275,8 +276,8 @@ export class FullCompaction {
       while (true) {
         const messagesToCompact = originalHistory.slice(0, compactedCount);
         const messages = [
-          ...this.agent.context.project(messagesToCompact),
-          createUserMessage(renderPrompt(compactionInstructionTemplate, { customInstruction: data.instruction ?? '' })),
+          ...stripMediaParts(trimTrailingOpenToolExchange(this.agent.context.project(messagesToCompact))),
+          createUserMessage(getCompactPrompt(data.instruction)),
         ];
         try {
           const response = await this.agent.generate(
@@ -325,16 +326,27 @@ export class FullCompaction {
         }
       }
 
-      summary = this.postProcessSummary(summary);
+      const recentMessagesPreserved = compactedCount < originalHistory.length;
+      summary = getCompactUserSummaryMessage(
+        summary,
+        data.source === 'auto',
+        undefined,
+        recentMessagesPreserved,
+      );
 
       const recent = originalHistory.slice(compactedCount);
-      const tokensAfter = estimateTokens(summary) + estimateTokensForMessages(recent);
+      const attachments = await buildCompactionAttachments(this.agent, originalHistory);
+      const tokensAfter =
+        estimateTokens(summary) +
+        estimateTokensForMessages(recent) +
+        estimateTokensForMessages(attachments);
 
       const result: CompactionResult = {
         summary,
         compactedCount,
         tokensBefore,
         tokensAfter,
+        ...(attachments.length > 0 ? { attachments } : {}),
       };
 
       this.agent.telemetry.track('compaction_finished', {
@@ -395,16 +407,6 @@ export class FullCompaction {
       },
     });
   }
-
-  private postProcessSummary(summary: string): string {
-    const storeData = this.agent.tools.storeData();
-    const todos = (storeData['todo'] as readonly TodoItem[] | undefined) ?? [];
-    if (todos.length === 0) {
-      return summary;
-    }
-    const todoMarkdown = renderTodoList(todos, '## TODO List');
-    return `${summary.trim()}\n\n${todoMarkdown}`;
-  }
 }
 
 function extractCompactionSummary(response: GenerateResult): string {
@@ -419,4 +421,25 @@ function extractCompactionSummary(response: GenerateResult): string {
     );
   }
   return summary;
+}
+
+// Claude Code strips image/document blocks before sending the conversation to
+// the summarizer — they are unnecessary for producing a summary and can
+// themselves trigger prompt-too-long. Mirror that here so the summarizer sees
+// the same shape of input.
+function stripMediaParts(messages: readonly Message[]): Message[] {
+  return messages.map((message) => {
+    if (!message.content.some((part) => part.type !== 'text' && part.type !== 'think')) {
+      return message;
+    }
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type === 'image_url') return { type: 'text', text: '[image]' } as const;
+        if (part.type === 'audio_url') return { type: 'text', text: '[audio]' } as const;
+        if (part.type === 'video_url') return { type: 'text', text: '[video]' } as const;
+        return part;
+      }),
+    };
+  });
 }

@@ -472,7 +472,7 @@ describe('Agent context', () => {
     });
 
     expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
-      'assistant',
+      'user',
       'user',
       'assistant',
       'tool',
@@ -489,7 +489,7 @@ describe('Agent context', () => {
     });
 
     expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
-      'assistant',
+      'user',
       'user',
       'assistant',
       'tool',
@@ -546,7 +546,7 @@ describe('Agent context', () => {
       system: <system-prompt>
       tools: []
       messages:
-        assistant: text "summary of old context"
+        user: text "summary of old context"
         user: text "recent user message\\n\\nnew prompt"
     `);
     await ctx.expectResumeMatches();
@@ -716,7 +716,7 @@ describe('Agent context', () => {
 
     expect(ctx.agent.context.history).toEqual([
       expect.objectContaining({
-        role: 'assistant',
+        role: 'user',
         origin: { kind: 'compaction_summary' },
         content: [{ type: 'text', text: 'summary of compacted context' }],
       }),
@@ -752,7 +752,7 @@ describe('Agent context', () => {
     }).not.toThrow();
     expect(ctx.agent.context.history).toEqual([
       expect.objectContaining({
-        role: 'assistant',
+        role: 'user',
         origin: { kind: 'compaction_summary' },
         content: [{ type: 'text', text: 'summary of compacted context' }],
       }),
