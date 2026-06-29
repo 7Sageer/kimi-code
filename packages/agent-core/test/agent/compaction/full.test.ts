@@ -1476,6 +1476,74 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('stops repeated provider-overflow compactions when the compacted context still overflows', async () => {
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      callCount += 1;
+      if (messageText(history.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION')) {
+        return textResult(`Still too large summary ${String(callCount)}.`);
+      }
+      throw new APIContextOverflowError(400, 'Context length exceeded', `req-overflow-${String(callCount)}`);
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry until overflow guard' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(countEvents(events, 'compaction.started')).toBe(3);
+    expect(callCount).toBe(7);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'context.overflow',
+            message: 'Compaction failed to bring the context under the model window after 3 attempts.',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('does not leave an orphan tool result at the start when reducing overflowing compaction input', async () => {
+    const inputs: string[][] = [];
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      callCount += 1;
+      inputs.push(inputHistorySnapshot(history));
+      if (callCount <= 2) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', `req-compact-overflow-${String(callCount)}`);
+      }
+      return textResult('Reduced tool history summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendToolExchange();
+    const compacted = ctx.once('context.apply_compaction');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+
+    expect(inputs).toHaveLength(3);
+    expect(inputs[1]?.map((entry) => entry.split(':', 1)[0])).toEqual([
+      'assistant',
+      'tool',
+      'user',
+    ]);
+    expect(inputs[2]?.map((entry) => entry.split(':', 1)[0])).toEqual(['user']);
+    expect(inputs[2]?.[0]).toBe('user: <compaction-instruction>');
+    await ctx.expectResumeMatches();
+  });
+
   it('recovers from plain 413 when estimated request is over effective max', async () => {
     let callCount = 0;
     const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {

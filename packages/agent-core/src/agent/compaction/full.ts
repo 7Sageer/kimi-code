@@ -51,6 +51,14 @@ import {
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
+// Consecutive provider-overflow recoveries (overflow -> compact -> overflow
+// again) allowed in a single turn before we give up. Each successful step
+// resets the counter, so this only trips when compaction stops reducing the
+// request below the model window — i.e. the compacted floor itself no longer
+// fits. Without this cap the turn loop can compact forever on a small or
+// observed-to-be-small context window.
+const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 3;
+
 const DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS = 128 * 1024;
 const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
@@ -77,6 +85,11 @@ export class FullCompaction {
   // checkAutoCompaction skips in that case even if an observed overflow
   // limit still flags the context as oversized.
   private lastCompactedTokenCount: number | null = null;
+  // Counts provider-overflow recoveries in this turn that have not yet been
+  // followed by a successful step. Trips MAX_OVERFLOW_COMPACTION_ATTEMPTS to
+  // stop an overflow -> compact -> overflow loop when compaction can no
+  // longer shrink the request below the model window.
+  private consecutiveOverflowCompactions = 0;
   protected readonly strategy: CompactionStrategy;
 
   constructor(
@@ -209,9 +222,18 @@ export class FullCompaction {
   resetForTurn(): void {
     this.compactionCountInTurn = 0;
     this.lastCompactedTokenCount = null;
+    this.consecutiveOverflowCompactions = 0;
   }
 
   async handleOverflowError(signal: AbortSignal, error: unknown) {
+    this.consecutiveOverflowCompactions += 1;
+    if (this.consecutiveOverflowCompactions > MAX_OVERFLOW_COMPACTION_ATTEMPTS) {
+      throw new KimiError(
+        ErrorCodes.CONTEXT_OVERFLOW,
+        `Compaction failed to bring the context under the model window after ${String(MAX_OVERFLOW_COMPACTION_ATTEMPTS)} attempts.`,
+        { cause: error instanceof Error ? error : undefined },
+      );
+    }
     const didStartCompaction = this.beginAutoCompaction();
     if (!didStartCompaction && !this.compacting) throw error;
     // Always block on overflow errors
@@ -226,6 +248,10 @@ export class FullCompaction {
   }
 
   async afterStep(): Promise<void> {
+    // A completed step means a generate() succeeded, so any prior
+    // overflow -> compact cycle produced a request that now fits; clear the
+    // loop guard.
+    this.consecutiveOverflowCompactions = 0;
     if (this.strategy.checkAfterStep) {
       this.checkAutoCompaction(false);
     }
@@ -401,7 +427,10 @@ export class FullCompaction {
             error instanceof CompactionTruncatedError ||
             error instanceof APIEmptyResponseError;
           if (isOverflow && historyForModel.length > 1) {
-            historyForModel = historyForModel.slice(1);
+            // Dropping a bare `slice(1)` can strand a tool result at the front,
+            // which the provider rejects as a malformed request. Trim any
+            // leading tool results along with the oldest message.
+            historyForModel = dropOldestMessageAndLeadingToolResults(historyForModel);
             retryCount = 0;
             continue;
           }
@@ -502,6 +531,17 @@ export class FullCompaction {
       },
     });
   }
+}
+
+function dropOldestMessageAndLeadingToolResults<T extends { readonly role: string }>(
+  messages: readonly T[],
+): T[] {
+  if (messages.length <= 1) return messages.slice();
+  let start = 1;
+  while (start < messages.length && messages[start]!.role === 'tool') {
+    start += 1;
+  }
+  return messages.slice(start);
 }
 
 function extractCompactionSummary(response: GenerateResult): string {
