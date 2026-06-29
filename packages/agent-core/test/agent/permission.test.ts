@@ -286,7 +286,7 @@ describe('Permission auto mode', () => {
 
     await injector.inject();
     appendSystemReminder.mockClear();
-    injector.onContextCompacted(1);
+    injector.onContextCompacted();
     await injector.inject();
 
     expect(appendSystemReminder).toHaveBeenCalledWith(
@@ -306,7 +306,7 @@ describe('Permission auto mode', () => {
 
     await injector.inject();
     appendSystemReminder.mockClear();
-    injector.onContextCompacted(1);
+    injector.onContextCompacted();
     permission.mode = 'manual';
     await injector.inject();
 

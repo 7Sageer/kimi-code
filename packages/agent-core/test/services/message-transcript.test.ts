@@ -127,6 +127,30 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(3);
   });
 
+  it('uses the recorded kept-user count for foldedLength when present', () => {
+    // The live context kept only the most recent real user message (e.g. the
+    // older ones were truncated in a prior compaction, or a clear dropped
+    // them). The full transcript still holds all three, so re-deriving from
+    // it would yield 3 and disagree with the live context. The reducer must
+    // trust the count recorded by ContextMemory.applyCompaction.
+    const { foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      appendMessage(userMessage('u3')),
+      {
+        type: 'context.apply_compaction',
+        summary: 'SUM',
+        compactedCount: 3,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        keptUserMessageCount: 1,
+      } as AgentRecord,
+      appendMessage(userMessage('u4')),
+    ]);
+    // 1 kept user message + summary + u4 appended after compaction.
+    expect(foldedLength).toBe(3);
+  });
+
   it('drops a late tool result after compaction closes an open exchange', () => {
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),

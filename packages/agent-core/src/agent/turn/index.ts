@@ -662,9 +662,14 @@ export class TurnFlow {
           },
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
-              this.flushSteerBuffer();
               this.agent.microCompaction.detect();
               await this.agent.fullCompaction.beforeStep(stepSignal);
+              // Flush steered messages (background-task / cron notifications,
+              // user interrupts) AFTER compaction so they land in the
+              // post-compaction context instead of being dropped by it:
+              // compaction keeps only genuine user prompts and discards these
+              // origins, and they are not re-injected later.
+              this.flushSteerBuffer();
               await this.agent.injection.inject();
               deduper.beginStep();
               return;

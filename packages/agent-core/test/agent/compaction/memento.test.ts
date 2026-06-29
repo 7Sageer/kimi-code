@@ -107,7 +107,7 @@ describe('selectRecentUserMessages', () => {
     expect(selected).toHaveLength(2);
     expect(messageText(selected[1]!)).toBe('recent');
     expect(estimateTokens(truncated)).toBeLessThanOrEqual(333);
-    expect([...truncated].every((char) => char === '😀')).toBe(true);
+    expect(/^(?:😀)*$/u.test(truncated)).toBe(true);
     expect(truncated.length % 2).toBe(0);
   });
 

@@ -2138,6 +2138,7 @@ const alwaysCompactOnce: CompactionStrategy = {
   shouldBlock: () => true,
   checkAfterStep: true,
   maxCompactionPerTurn: 1,
+  maxOverflowCompactionAttempts: 3,
 };
 
 function missingToolCall(): ToolCall {
@@ -2155,6 +2156,7 @@ function overflowOnlyCompactionStrategy(maxSize: number = 14): DefaultCompaction
     blockRatio: Infinity,
     reservedContextSize: 0,
     maxCompactionPerTurn: 3,
+    maxOverflowCompactionAttempts: 3,
   });
 }
 

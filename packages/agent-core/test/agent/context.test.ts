@@ -578,7 +578,6 @@ describe('Agent context', () => {
       summary: 'summary of old prompt',
       compactedCount: 4,
       tokensBefore: 100,
-      tokensAfter: 40,
     });
     ctx.agent.context.appendSystemReminder('second reminder', {
       kind: 'injection',
@@ -645,7 +644,6 @@ describe('Agent context', () => {
       summary: 'summary of old context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
     expect(ctx.agent.context.history.at(-1)?.origin).toEqual({ kind: 'compaction_summary' });
 
@@ -810,7 +808,6 @@ describe('Agent context', () => {
       summary: 'summary of compacted context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
     ctx.agent.context.appendMessage({
@@ -854,7 +851,6 @@ describe('Agent context', () => {
       summary: 'summary of compacted context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
     ctx.agent.context.appendMessage({

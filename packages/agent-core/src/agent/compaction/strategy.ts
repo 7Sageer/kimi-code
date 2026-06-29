@@ -9,10 +9,16 @@ export interface CompactionConfig {
   reservedContextSize: number;
   /** Maximum number of auto-compactions allowed in a single turn. */
   maxCompactionPerTurn: number;
+  /**
+   * Consecutive provider-overflow recoveries (overflow -> compact -> overflow
+   * again) allowed in a single turn before giving up. Caps the loop when
+   * compaction can no longer shrink the request below the model window.
+   */
+  maxOverflowCompactionAttempts: number;
 }
 
 /**
- * Auto-compact at 90% of the resolved context window. `blockRatio` matches
+ * Auto-compact at 85% of the resolved context window. `blockRatio` matches
  * `triggerRatio` so compaction runs synchronously with no background
  * compaction.
  */
@@ -21,6 +27,7 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   blockRatio: 0.85,
   reservedContextSize: 50_000,
   maxCompactionPerTurn: Infinity,
+  maxOverflowCompactionAttempts: 3,
 };
 
 export interface CompactionStrategy {
@@ -28,6 +35,7 @@ export interface CompactionStrategy {
   shouldBlock(usedSize: number): boolean;
   readonly checkAfterStep: boolean;
   readonly maxCompactionPerTurn: number;
+  readonly maxOverflowCompactionAttempts: number;
 }
 
 export class DefaultCompactionStrategy implements CompactionStrategy {
@@ -67,6 +75,10 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
   get maxCompactionPerTurn(): number {
     return this.config.maxCompactionPerTurn;
+  }
+
+  get maxOverflowCompactionAttempts(): number {
+    return this.config.maxOverflowCompactionAttempts;
   }
 }
 

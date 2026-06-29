@@ -51,10 +51,10 @@ export class InjectionManager {
     }
   }
 
-  onContextCompacted(compactedCount: number): void {
+  onContextCompacted(): void {
     for (const injector of this.lifecycleInjectors()) {
       try {
-        injector.onContextCompacted(compactedCount);
+        injector.onContextCompacted();
       } catch {
         continue;
       }

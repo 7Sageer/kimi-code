@@ -42,6 +42,7 @@ describe('DefaultCompactionStrategy', () => {
       blockRatio: 0.9,
       reservedContextSize: 50_000,
       maxCompactionPerTurn: 3,
+      maxOverflowCompactionAttempts: 3,
     });
 
     expect(strategy.shouldCompact(1)).toBe(false);
@@ -64,6 +65,7 @@ describe('DefaultCompactionStrategy', () => {
       blockRatio: 0.9,
       reservedContextSize: 0,
       maxCompactionPerTurn: 3,
+      maxOverflowCompactionAttempts: 3,
     });
 
     expect(strategy.checkAfterStep).toBe(true);
@@ -82,5 +84,6 @@ function testCompactionStrategy(maxSize: number = 1_000): DefaultCompactionStrat
     blockRatio: 0.85,
     reservedContextSize: 0,
     maxCompactionPerTurn: 3,
+    maxOverflowCompactionAttempts: 3,
   });
 }

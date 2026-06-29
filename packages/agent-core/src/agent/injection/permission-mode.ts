@@ -17,7 +17,7 @@ export class PermissionModeInjector extends DynamicInjector {
   private lastMode: PermissionMode | undefined;
   private refreshAfterCompaction = false;
 
-  override onContextCompacted(_compactedCount: number): void {
+  override onContextCompacted(): void {
     this.injectedAt = null;
     this.refreshAfterCompaction = true;
   }

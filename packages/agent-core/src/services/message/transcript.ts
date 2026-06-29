@@ -48,6 +48,7 @@ import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   collectCompactableUserMessages,
+  isRealUserInput,
   selectRecentUserMessages,
 } from '../../agent/compaction';
 
@@ -217,7 +218,7 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
       if (message.origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);
-      if (isRealUserPrompt(message)) {
+      if (isRealUserInput(message)) {
         removedUserCount++;
         if (removedUserCount >= count) break;
       }
@@ -247,10 +248,6 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         // most recent user messages followed by a user-role summary. The
         // transcript keeps the full history and appends the summary marker;
         // foldedLength tracks the post-compaction live context length.
-        const keptUserMessages = selectRecentUserMessages(
-          collectCompactableUserMessages(transcript.map((entry) => entry.message)),
-          COMPACT_USER_MESSAGE_MAX_TOKENS,
-        );
         transcript.push({
           message: {
             role: 'user',
@@ -260,7 +257,22 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
           },
           time: record.time,
         });
-        foldedLength = keptUserMessages.length + 1;
+        // Prefer the kept-user count recorded by the live
+        // ContextMemory.applyCompaction. Re-deriving it from the full
+        // transcript would diverge from the live context: the transcript still
+        // holds the untruncated originals of messages the live context may
+        // have truncated, and (after a clear) messages the live context no
+        // longer has. Only fall back to re-deriving for legacy wire records
+        // that predate the field.
+        if (record.keptUserMessageCount !== undefined) {
+          foldedLength = record.keptUserMessageCount + 1;
+        } else {
+          const keptUserMessages = selectRecentUserMessages(
+            collectCompactableUserMessages(transcript.map((entry) => entry.message)),
+            COMPACT_USER_MESSAGE_MAX_TOKENS,
+          );
+          foldedLength = keptUserMessages.length + 1;
+        }
         // Drop any open tool exchange and deferred messages exactly like
         // ContextMemory.applyCompaction: late tool results become orphans and
         // deferred injections are not rebuilt, so pending ids must not strand
@@ -282,17 +294,6 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
   }
 
   return { entries: transcript as TranscriptEntry[], foldedLength };
-}
-
-/** Mirrors agent-core's `isRealUserPrompt` (context undo accounting). */
-function isRealUserPrompt(message: MutableMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') {
-    return origin.trigger === 'user-slash';
-  }
-  return false;
 }
 
 /** Mirrors agent-core's `toolResultOutputForModel` + `createToolMessage`. */

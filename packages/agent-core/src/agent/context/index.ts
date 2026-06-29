@@ -3,12 +3,13 @@ import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
-import { estimateTokensForMessages } from '../../utils/tokens';
+import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
 import { escapeXml } from '../../utils/xml-escape';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   collectCompactableUserMessages,
   selectRecentUserMessages,
+  type CompactionInput,
   type CompactionResult,
 } from '../compaction';
 import { project, trimTrailingOpenToolExchange } from './projector';
@@ -210,7 +211,27 @@ export class ContextMemory {
     }
   }
 
-  applyCompaction(result: CompactionResult): void {
+  applyCompaction(input: CompactionInput): CompactionResult {
+    // Single derivation point for the post-compaction shape: the most recent
+    // real user messages (verbatim, within the token budget) followed by a
+    // user-role summary. `tokensAfter` and `keptUserMessageCount` are derived
+    // here from the actual `_history` so the live context, the wire record,
+    // and the transcript reducer all agree — re-deriving them elsewhere (e.g.
+    // from the full transcript, which still holds the untruncated originals of
+    // messages the live context truncated) would diverge.
+    const keptUserMessages = selectRecentUserMessages(
+      collectCompactableUserMessages(this._history),
+      COMPACT_USER_MESSAGE_MAX_TOKENS,
+    );
+    const tokensAfter =
+      estimateTokens(input.summary) + estimateTokensForMessages(keptUserMessages);
+    const result: CompactionResult = {
+      summary: input.summary,
+      compactedCount: input.compactedCount,
+      tokensBefore: input.tokensBefore,
+      tokensAfter,
+      keptUserMessageCount: keptUserMessages.length,
+    };
     this.agent.records.logRecord({
       type: 'context.apply_compaction',
       ...result,
@@ -221,12 +242,9 @@ export class ContextMemory {
         compactedCount: result.compactedCount,
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
+        keptUserMessageCount: result.keptUserMessageCount,
       },
     });
-    const keptUserMessages = selectRecentUserMessages(
-      collectCompactableUserMessages(this._history),
-      COMPACT_USER_MESSAGE_MAX_TOKENS,
-    );
     this._history = [
       ...keptUserMessages,
       {
@@ -244,8 +262,9 @@ export class ContextMemory {
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
-    this.agent.injection.onContextCompacted(result.compactedCount);
+    this.agent.injection.onContextCompacted();
     this.agent.emitStatusUpdated();
+    return result;
   }
 
   data(): AgentContextData {

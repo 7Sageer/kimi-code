@@ -284,6 +284,15 @@ export interface CompactionResult {
   readonly compactedCount: number;
   readonly tokensBefore: number;
   readonly tokensAfter: number;
+  /**
+   * Number of real user messages kept verbatim ahead of the summary in the
+   * post-compaction live context. Recorded so the wire-transcript reducer can
+   * reproduce the live folded length without re-deriving it from the full
+   * transcript (which still holds the untruncated originals of messages the
+   * live context may have truncated, so the two would otherwise diverge).
+   * Optional for backward compatibility with older wire records.
+   */
+  readonly keptUserMessageCount?: number;
 }
 
 export interface ToolUpdate {
@@ -944,6 +953,7 @@ export const compactionResultSchema = z.object({
   compactedCount: z.number(),
   tokensBefore: z.number(),
   tokensAfter: z.number(),
+  keptUserMessageCount: z.number().optional(),
 }) satisfies z.ZodType<CompactionResult>;
 
 export const toolUpdateSchema = z.object({

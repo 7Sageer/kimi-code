@@ -42,22 +42,9 @@ import {
   DefaultCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
-import {
-  COMPACT_USER_MESSAGE_MAX_TOKENS,
-  buildCompactionSummaryText,
-  collectCompactableUserMessages,
-  selectRecentUserMessages,
-} from './memento';
+import { buildCompactionSummaryText } from './memento';
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
-
-// Consecutive provider-overflow recoveries (overflow -> compact -> overflow
-// again) allowed in a single turn before we give up. Each successful step
-// resets the counter, so this only trips when compaction stops reducing the
-// request below the model window — i.e. the compacted floor itself no longer
-// fits. Without this cap the turn loop can compact forever on a small or
-// observed-to-be-small context window.
-const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 3;
 
 const DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS = 128 * 1024;
 const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
@@ -227,10 +214,11 @@ export class FullCompaction {
 
   async handleOverflowError(signal: AbortSignal, error: unknown) {
     this.consecutiveOverflowCompactions += 1;
-    if (this.consecutiveOverflowCompactions > MAX_OVERFLOW_COMPACTION_ATTEMPTS) {
+    const maxAttempts = this.strategy.maxOverflowCompactionAttempts;
+    if (this.consecutiveOverflowCompactions > maxAttempts) {
       throw new KimiError(
         ErrorCodes.CONTEXT_OVERFLOW,
-        `Compaction failed to bring the context under the model window after ${String(MAX_OVERFLOW_COMPACTION_ATTEMPTS)} attempts.`,
+        `Compaction failed to bring the context under the model window after ${String(maxAttempts)} attempts.`,
         { cause: error instanceof Error ? error : undefined },
       );
     }
@@ -459,18 +447,11 @@ export class FullCompaction {
       }
 
       const summaryText = buildCompactionSummaryText(this.postProcessSummary(summary ?? ''));
-      const keptUserMessages = selectRecentUserMessages(
-        collectCompactableUserMessages(originalHistory),
-        COMPACT_USER_MESSAGE_MAX_TOKENS,
-      );
-      const tokensAfter = estimateTokens(summaryText) + estimateTokensForMessages(keptUserMessages);
-
-      const result: CompactionResult = {
+      const result = this.agent.context.applyCompaction({
         summary: summaryText,
         compactedCount: originalHistory.length,
         tokensBefore,
-        tokensAfter,
-      };
+      });
 
       this.agent.telemetry.track('compaction_finished', {
         tokensBefore: result.tokensBefore,
@@ -483,7 +464,6 @@ export class FullCompaction {
         ...usage,
         ...data,
       });
-      this.agent.context.applyCompaction(result);
       this.lastCompactedTokenCount = result.tokensAfter;
       return result;
     } catch (error) {
