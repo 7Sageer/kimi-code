@@ -7,3 +7,5 @@ Include:
 - Any critical data, examples, or references needed to continue
 
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
+
+Respond with text only. Do not call any tools — you already have everything you need in the conversation history.

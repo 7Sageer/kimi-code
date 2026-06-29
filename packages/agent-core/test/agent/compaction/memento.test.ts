@@ -83,6 +83,19 @@ describe('selectRecentUserMessages', () => {
     expect(messageText(selected[1]!)).toBe('recent');
   });
 
+  it('truncates a CJK-heavy oldest message within the budget in one pass', () => {
+    const cjk = '中'.repeat(40_000);
+    const messages = [textMessage('user', cjk), textMessage('user', 'recent')];
+    const budget = estimateTokensForMessage(messages[1]!) + 1_000;
+
+    const selected = selectRecentUserMessages(messages, budget);
+
+    expect(selected).toHaveLength(2);
+    expect(messageText(selected[1]!)).toBe('recent');
+    expect(estimateTokens(messageText(selected[0]!))).toBeLessThanOrEqual(1_000);
+    expect(cjk.startsWith(messageText(selected[0]!))).toBe(true);
+  });
+
   it('returns nothing when the budget is zero', () => {
     expect(selectRecentUserMessages([textMessage('user', 'hi')], 0)).toEqual([]);
   });

@@ -127,6 +127,39 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(3);
   });
 
+  it('drops a late tool result after compaction closes an open exchange', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
+      loopEvent({
+        type: 'tool.call',
+        uuid: 'c1',
+        turnId: 't',
+        step: 0,
+        stepUuid: 's1',
+        toolCallId: 'call_1',
+        name: 'Bash',
+        arguments: '{"command":"ls"}',
+      }),
+      compaction('SUM', 3),
+      loopEvent({
+        type: 'tool.result',
+        parentUuid: 'c1',
+        toolCallId: 'call_1',
+        result: { output: 'late result' },
+      }),
+      appendMessage(userMessage('u2')),
+    ]);
+
+    // Compaction closes the open exchange, so the late tool result is an
+    // orphan and dropped — matching ContextMemory — and the following user
+    // message is appended normally instead of being stranded in `deferred`.
+    expect(entries.map((e) => e.message.role)).toEqual(['user', 'assistant', 'user', 'user']);
+    expect(entries.map((e) => textOf(e.message))).toEqual(['u1', '', 'SUM', 'u2']);
+    // live folded view would be [u1, SUM, u2]
+    expect(foldedLength).toBe(3);
+  });
+
   it('undo removes through the last real user prompt and skips injections', () => {
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),

@@ -17,8 +17,8 @@ export interface CompactionConfig {
  * compaction.
  */
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
-  triggerRatio: 0.9,
-  blockRatio: 0.9,
+  triggerRatio: 0.85,
+  blockRatio: 0.85,
   reservedContextSize: 50_000,
   maxCompactionPerTurn: Infinity,
 };

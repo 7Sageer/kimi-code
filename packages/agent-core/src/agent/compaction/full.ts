@@ -22,6 +22,11 @@ import {
   sleepForRetry,
 } from '../../loop/retry';
 import {
+  renderTodoList,
+  TODO_STORE_KEY,
+  type TodoItem,
+} from '../../tools/builtin/state/todo-list';
+import {
   estimateTokens,
   estimateTokensForMessages,
   estimateTokensForTools,
@@ -305,6 +310,16 @@ export class FullCompaction {
     return `${base}\n\n${customInstruction}`;
   }
 
+  private postProcessSummary(summary: string): string {
+    const storeData = this.agent.tools.storeData();
+    const todos = (storeData[TODO_STORE_KEY] as readonly TodoItem[] | undefined) ?? [];
+    if (todos.length === 0) {
+      return summary;
+    }
+    const todoMarkdown = renderTodoList(todos, '## TODO List');
+    return `${summary.trim()}\n\n${todoMarkdown}`;
+  }
+
   private async compactionRound(
     signal: AbortSignal,
     data: Readonly<CompactionBeginData>,
@@ -409,7 +424,7 @@ export class FullCompaction {
         }
       }
 
-      const summaryText = buildCompactionSummaryText(summary ?? '');
+      const summaryText = buildCompactionSummaryText(this.postProcessSummary(summary ?? ''));
       const keptUserMessages = selectRecentUserMessages(
         collectCompactableUserMessages(originalHistory),
         COMPACT_USER_MESSAGE_MAX_TOKENS,

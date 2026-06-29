@@ -1,4 +1,4 @@
-import { estimateTokens, estimateTokensForMessage } from '../../utils/tokens';
+import { estimateTokensForMessage } from '../../utils/tokens';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 
 /**
@@ -64,10 +64,21 @@ export function collectCompactableUserMessages<T extends MessageLike>(messages: 
 
 function truncateTextToTokens(text: string, maxTokens: number): string {
   if (maxTokens <= 0) return '';
-  if (estimateTokens(text) <= maxTokens) return text;
-  let end = Math.min(text.length, maxTokens * 4);
-  while (end > 0 && estimateTokens(text.slice(0, end)) > maxTokens) {
-    end--;
+  // Single pass: walk the string once, mirroring estimateTokens' heuristic
+  // (ASCII ~4 chars/token, non-ASCII ~1 char/token) and stop at the first
+  // code point that would push the running total over the budget. This keeps
+  // CJK-heavy inputs from the O(n^2) cost of re-estimating shrinking prefixes.
+  let asciiCount = 0;
+  let nonAsciiCount = 0;
+  let end = 0;
+  for (const char of text) {
+    if (char.codePointAt(0)! <= 127) {
+      asciiCount++;
+    } else {
+      nonAsciiCount++;
+    }
+    if (Math.ceil(asciiCount / 4) + nonAsciiCount > maxTokens) break;
+    end += char.length;
   }
   return text.slice(0, end);
 }

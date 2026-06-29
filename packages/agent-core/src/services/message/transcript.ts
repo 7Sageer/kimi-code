@@ -261,8 +261,11 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
           time: record.time,
         });
         foldedLength = keptUserMessages.length + 1;
-        openSteps.clear();
-        flushDeferredIfToolExchangeClosed();
+        // Drop any open tool exchange and deferred messages exactly like
+        // ContextMemory.applyCompaction: late tool results become orphans and
+        // deferred injections are not rebuilt, so pending ids must not strand
+        // later appends in `deferred`.
+        resetOpenState();
         break;
       }
       case 'context.undo':
