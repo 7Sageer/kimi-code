@@ -266,6 +266,16 @@ export function projectContext(
             tokensAfter: rec.tokensAfter,
           },
         };
+        const modelSummaryBubble: ProjectedMessage =
+          rec.contextSummary === undefined
+            ? summaryBubble
+            : {
+                ...summaryBubble,
+                message: {
+                  ...summaryBubble.message,
+                  content: [{ type: 'text', text: rec.contextSummary }],
+                } as ContextMessage,
+              };
         if (mode === 'model') {
           // Rebuild the model's-eye view as the kept user messages + summary.
           // `realUserEntries` is filtered with the exact
@@ -289,7 +299,7 @@ export function projectContext(
             const original = realUserEntries[suffixStart + i]!;
             return original.message === message ? original : { ...original, message };
           });
-          messages = [...keptEntries, summaryBubble];
+          messages = [...keptEntries, modelSummaryBubble];
         } else {
           // Full history: keep ALL preceding messages, just append the summary
           // marker inline so the compacted prefix stays visible.

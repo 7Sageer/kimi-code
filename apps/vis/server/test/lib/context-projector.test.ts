@@ -275,6 +275,27 @@ describe('context-projector', () => {
     expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'new' });
   });
 
+  it('uses contextSummary only for the model view and raw summary for full history', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'old' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.apply_compaction' as const,
+          summary: 'raw summary', contextSummary: 'prefixed summary', compactedCount: 1, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+    ];
+
+    const model = projectContext(entries as any);
+    expect(model.messages.map((m) => m.message.content[0])).toMatchObject([
+      { text: 'old' },
+      { text: 'prefixed summary' },
+    ]);
+
+    const full = projectContext(entries as any, 'full');
+    expect(full.messages.map((m) => m.message.content[0])).toMatchObject([
+      { text: 'old' },
+      { text: 'raw summary' },
+    ]);
+  });
+
   it('apply_compaction keeps the most recent user messages and drops the assistant/tool tail', () => {
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const,

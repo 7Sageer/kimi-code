@@ -78,10 +78,10 @@ describe('FullCompaction', () => {
       [emit] compaction.started         { "trigger": "manual", "instruction": "Keep the important test facts." }
       [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 120, "maxContextTokens": 256000, "contextUsage": 0.00046875, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] context.apply_compaction   { "summary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nCompacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 119, "keptUserMessageCount": 3, "time": "<time>" }
+      [wire] context.apply_compaction   { "summary": "Compacted summary.", "contextSummary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nCompacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 119, "keptUserMessageCount": 3, "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 119, "maxContextTokens": 256000, "contextUsage": 0.00046484375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.complete   { "time": "<time>" }
-      [emit] compaction.completed       { "result": { "summary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nCompacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 119, "keptUserMessageCount": 3 } }
+      [emit] compaction.completed       { "result": { "summary": "Compacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 119, "keptUserMessageCount": 3 } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -131,6 +131,34 @@ describe('FullCompaction', () => {
       }),
     });
     await ctx.expectResumeMatches();
+  });
+
+  it('emits the raw summary while keeping the prefixed summary in model context', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const completedEvent = ctx.allEvents.find((entry) => entry.event === 'compaction.completed');
+    expect(completedEvent?.args).toEqual({
+      result: expect.objectContaining({
+        summary: 'Compacted summary.',
+      }),
+    });
+    expect(completedEvent?.args).not.toEqual({
+      result: expect.objectContaining({
+        summary: expect.stringContaining(COMPACTION_SUMMARY_PREFIX),
+      }),
+    });
+    expect(ctx.agent.context.history.at(-1)?.content).toEqual([
+      { type: 'text', text: `${COMPACTION_SUMMARY_PREFIX}\nCompacted summary.` },
+    ]);
   });
 
   it('keeps only real user input and re-injects permission reminders after compaction', async () => {
@@ -200,12 +228,14 @@ describe('FullCompaction', () => {
       keptUserMessageCount?: number;
       tokensAfter?: number;
       summary?: string;
+      contextSummary?: string;
     };
     expect(record.keptUserMessageCount).toBe(2);
-    const expectedSummary = `${COMPACTION_SUMMARY_PREFIX}\nCompacted summary.`;
-    expect(record.summary).toBe(expectedSummary);
+    const expectedContextSummary = `${COMPACTION_SUMMARY_PREFIX}\nCompacted summary.`;
+    expect(record.summary).toBe('Compacted summary.');
+    expect(record.contextSummary).toBe(expectedContextSummary);
     expect(record.tokensAfter).toBe(
-      estimateTokens(expectedSummary) +
+      estimateTokens(expectedContextSummary) +
         estimateTokensForMessages(ctx.agent.context.history.slice(0, 2)),
     );
   });
@@ -998,10 +1028,10 @@ describe('FullCompaction', () => {
       [wire] context.append_message     { "message": { "role": "user", "content": [ { "type": "text", "text": "new user while compacting" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 80, "maxContextTokens": 256000, "contextUsage": 0.0003125, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] context.apply_compaction   { "summary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nCompacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 122, "keptUserMessageCount": 3, "time": "<time>" }
+      [wire] context.apply_compaction   { "summary": "Compacted prefix.", "contextSummary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nCompacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 122, "keptUserMessageCount": 3, "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 122, "maxContextTokens": 256000, "contextUsage": 0.0004765625, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.complete   { "time": "<time>" }
-      [emit] compaction.completed       { "result": { "summary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nCompacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 122, "keptUserMessageCount": 3 } }
+      [emit] compaction.completed       { "result": { "summary": "Compacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 122, "keptUserMessageCount": 3 } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -1106,10 +1136,10 @@ describe('FullCompaction', () => {
       [emit] compaction.blocked          { "turnId": 0 }
       [wire] usage.record                { "model": "kimi-code", "usage": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 950000, "maxContextTokens": 256000, "contextUsage": 3.7109375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] context.apply_compaction    { "summary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nAuto compacted summary.", "compactedCount": 7, "tokensBefore": 46, "tokensAfter": 127, "keptUserMessageCount": 4, "time": "<time>" }
+      [wire] context.apply_compaction    { "summary": "Auto compacted summary.", "contextSummary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nAuto compacted summary.", "compactedCount": 7, "tokensBefore": 46, "tokensAfter": 127, "keptUserMessageCount": 4, "time": "<time>" }
       [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 127, "maxContextTokens": 256000, "contextUsage": 0.00049609375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.complete    { "time": "<time>" }
-      [emit] compaction.completed        { "result": { "summary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nAuto compacted summary.", "compactedCount": 7, "tokensBefore": 46, "tokensAfter": 127, "keptUserMessageCount": 4 } }
+      [emit] compaction.completed        { "result": { "summary": "Auto compacted summary.", "compactedCount": 7, "tokensBefore": 46, "tokensAfter": 127, "keptUserMessageCount": 4 } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I can answer after compaction." }
@@ -2106,10 +2136,10 @@ describe('FullCompaction', () => {
       [emit] compaction.blocked          { "turnId": 0 }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] context.apply_compaction    { "summary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nFirst compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 114, "keptUserMessageCount": 1, "time": "<time>" }
+      [wire] context.apply_compaction    { "summary": "First compacted summary.", "contextSummary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nFirst compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 114, "keptUserMessageCount": 1, "time": "<time>" }
       [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 114, "maxContextTokens": 1000000, "contextUsage": 0.000114, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.complete    { "time": "<time>" }
-      [emit] compaction.completed        { "result": { "summary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nFirst compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 114, "keptUserMessageCount": 1 } }
+      [emit] compaction.completed        { "result": { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 114, "keptUserMessageCount": 1 } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I need a tool." }

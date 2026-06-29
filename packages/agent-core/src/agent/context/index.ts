@@ -226,13 +226,16 @@ export class ContextMemory {
     );
     // Live compaction omits these so they are derived from the actual
     // `_history`; restore passes the persisted record so its historical values
-    // are preserved verbatim.
+    // are preserved verbatim. Older wire records did not have `contextSummary`,
+    // so their `summary` remains the model-context text during restore.
+    const contextSummary = input.contextSummary ?? input.summary;
     const tokensAfter =
       input.tokensAfter ??
-      estimateTokens(input.summary) + estimateTokensForMessages(keptUserMessages);
+      estimateTokens(contextSummary) + estimateTokensForMessages(keptUserMessages);
     const keptUserMessageCount = input.keptUserMessageCount ?? keptUserMessages.length;
     const result: CompactionResult = {
       summary: input.summary,
+      contextSummary,
       compactedCount: input.compactedCount,
       tokensBefore: input.tokensBefore,
       tokensAfter,
@@ -246,6 +249,7 @@ export class ContextMemory {
     this.agent.replayBuilder.patchLast('compaction', {
       result: {
         summary: result.summary,
+        contextSummary: result.contextSummary,
         compactedCount: result.compactedCount,
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
@@ -257,7 +261,7 @@ export class ContextMemory {
       ...keptUserMessages,
       {
         role: 'user',
-        content: [{ type: 'text', text: result.summary }],
+        content: [{ type: 'text', text: contextSummary }],
         toolCalls: [],
         origin: { kind: 'compaction_summary' },
       },

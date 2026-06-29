@@ -306,7 +306,9 @@ export class FullCompaction {
       } catch (error) {
         this.agent.log.error('failed to refresh system prompt after compaction', { error });
       }
-      this.agent.emitEvent({ type: 'compaction.completed', result });
+      const { contextSummary: _contextSummary, ...eventResult } = result;
+      void _contextSummary;
+      this.agent.emitEvent({ type: 'compaction.completed', result: eventResult });
       await this.agent.injection.injectAfterCompaction();
       this.triggerPostCompactHook(data, result);
     } catch (error) {
@@ -460,9 +462,11 @@ export class FullCompaction {
         }
       }
 
-      const summaryText = buildCompactionSummaryText(this.postProcessSummary(summary ?? ''));
+      const rawSummary = this.postProcessSummary(summary ?? '');
+      const contextSummary = buildCompactionSummaryText(rawSummary);
       const result = this.agent.context.applyCompaction({
-        summary: summaryText,
+        summary: rawSummary,
+        contextSummary,
         compactedCount: originalHistory.length,
         tokensBefore,
         droppedCount: droppedCount === 0 ? undefined : droppedCount,

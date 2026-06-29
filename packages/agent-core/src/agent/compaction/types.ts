@@ -1,5 +1,13 @@
 export interface CompactionResult {
+  /** Human-facing summary text produced by the compaction model. */
   summary: string;
+  /**
+   * Exact summary message stored in the live model context. It includes the
+   * compaction prefix that tells the next model this is handoff context rather
+   * than a real user prompt. Optional for backward compatibility with older
+   * wire records, where `summary` was also the model-context text.
+   */
+  contextSummary?: string;
   compactedCount: number;
   tokensBefore: number;
   tokensAfter: number;
@@ -31,7 +39,7 @@ export interface CompactionResult {
  * historical values are preserved verbatim.
  */
 export type CompactionInput = Pick<CompactionResult, 'summary' | 'compactedCount' | 'tokensBefore'> &
-  Partial<Pick<CompactionResult, 'tokensAfter' | 'keptUserMessageCount' | 'droppedCount'>>;
+  Partial<Pick<CompactionResult, 'contextSummary' | 'tokensAfter' | 'keptUserMessageCount' | 'droppedCount'>>;
 
 export type CompactionSource = 'manual' | 'auto';
 
