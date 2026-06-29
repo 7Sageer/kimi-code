@@ -29,6 +29,7 @@ import {
 } from '../../tools/builtin/state/todo-list';
 import {
   estimateTokens,
+  estimateTokensForMessage,
   estimateTokensForMessages,
   estimateTokensForTools,
 } from '../../utils/tokens';
@@ -376,15 +377,12 @@ export class FullCompaction {
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let usage: TokenUsage | null = null;
       let summary: string | undefined;
-      // Compact the whole history, dropping the oldest item on overflow to
-      // preserve the prefix-cache-friendly tail. `historyForModel` is the
-      // (possibly trimmed) view sent to the model. When it is trimmed, the
-      // dropped oldest messages are not covered by the produced summary (a
-      // kept real-user message among them may still be retained verbatim, but
-      // assistant/tool messages are lost); `droppedCount` tracks how many so
-      // records and telemetry can surface the summary's blind spot honestly.
+      // Compact the whole history, trimming old messages only when the
+      // summarizer request itself cannot fit. Any trimmed messages are not
+      // covered by the produced summary; `droppedCount` reports that blind spot.
       let historyForModel = originalHistory;
       let droppedCount = 0;
+      let overflowShrinkCount = 0;
       while (true) {
         const messages = [
           ...this.agent.context.project(historyForModel),
@@ -414,14 +412,24 @@ export class FullCompaction {
           if (isContextOverflow) {
             this.observeContextOverflow(estimatedCompactionRequestTokens);
           }
-          const isOverflow =
-            isContextOverflow ||
+          if (isContextOverflow && historyForModel.length > 1) {
+            overflowShrinkCount += 1;
+            if (overflowShrinkCount > MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS) {
+              throw error;
+            }
+            const before = historyForModel.length;
+            historyForModel = shrinkCompactionHistoryAfterOverflow(
+              historyForModel,
+              overflowShrinkCount,
+            );
+            droppedCount += before - historyForModel.length;
+            retryCount = 0;
+            continue;
+          }
+          const shouldShrinkAfterEmptyOrTruncated =
             error instanceof CompactionTruncatedError ||
             error instanceof APIEmptyResponseError;
-          if (isOverflow && historyForModel.length > 1) {
-            // Dropping a bare `slice(1)` can strand a tool result at the front,
-            // which the provider rejects as a malformed request. Trim any
-            // leading tool results along with the oldest message.
+          if (shouldShrinkAfterEmptyOrTruncated && historyForModel.length > 1) {
             const before = historyForModel.length;
             historyForModel = dropOldestMessageAndLeadingToolResults(historyForModel);
             droppedCount += before - historyForModel.length;
@@ -527,11 +535,46 @@ export class FullCompaction {
   }
 }
 
+const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
+const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
+
+function shrinkCompactionHistoryAfterOverflow<T extends Message>(
+  messages: readonly T[],
+  attempt: number,
+): T[] {
+  if (messages.length <= 1) return messages.slice();
+  const ratio = COMPACTION_OVERFLOW_SHRINK_RATIOS[
+    Math.min(attempt - 1, COMPACTION_OVERFLOW_SHRINK_RATIOS.length - 1)
+  ]!;
+  const tokenBudget = Math.floor(estimateTokensForMessages(messages) * ratio);
+  return takeRecentMessagesWithinTokenBudget(messages, tokenBudget);
+}
+
+function takeRecentMessagesWithinTokenBudget<T extends Message>(
+  messages: readonly T[],
+  tokenBudget: number,
+): T[] {
+  let start = messages.length;
+  let tokens = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const messageTokens = estimateTokensForMessage(messages[i]!);
+    if (tokens + messageTokens > tokenBudget) break;
+    tokens += messageTokens;
+    start = i;
+  }
+  if (start === 0) start = 1;
+  return dropLeadingToolResults(messages.slice(start));
+}
+
 function dropOldestMessageAndLeadingToolResults<T extends { readonly role: string }>(
   messages: readonly T[],
 ): T[] {
   if (messages.length <= 1) return messages.slice();
-  let start = 1;
+  return dropLeadingToolResults(messages.slice(1));
+}
+
+function dropLeadingToolResults<T extends { readonly role: string }>(messages: readonly T[]): T[] {
+  let start = 0;
   while (start < messages.length && messages[start]!.role === 'tool') {
     start += 1;
   }

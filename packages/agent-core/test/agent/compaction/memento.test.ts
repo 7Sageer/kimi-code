@@ -103,8 +103,14 @@ describe('isCompactionSummaryMessage', () => {
     expect(isCompactionSummaryMessage(message)).toBe(true);
   });
 
-  it('detects the summary prefix', () => {
-    expect(isCompactionSummaryMessage(textMessage('user', `${COMPACTION_SUMMARY_PREFIX}\nsummary`))).toBe(true);
+  it('keeps real user prompts even when they start with the summary prefix', () => {
+    const message = {
+      ...textMessage('user', `${COMPACTION_SUMMARY_PREFIX}\nsummary`),
+      origin: { kind: 'user' as const },
+    };
+
+    expect(isCompactionSummaryMessage(message)).toBe(false);
+    expect(collectCompactableUserMessages([message])).toEqual([message]);
   });
 
   it('ignores ordinary user messages', () => {

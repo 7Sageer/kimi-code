@@ -77,8 +77,7 @@ function extractText(content: readonly ContentPart[]): string {
 }
 
 export function isCompactionSummaryMessage(message: MessageLike): boolean {
-  if (message.origin?.kind === 'compaction_summary') return true;
-  return extractText(message.content).startsWith(`${COMPACTION_SUMMARY_PREFIX}\n`);
+  return message.origin?.kind === 'compaction_summary';
 }
 
 /**

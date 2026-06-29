@@ -1613,12 +1613,10 @@ describe('FullCompaction', () => {
 
   it('does not leave an orphan tool result at the start when reducing overflowing compaction input', async () => {
     const inputs: string[][] = [];
-    let callCount = 0;
     const generate: GenerateFn = async (_provider, _system, _tools, history) => {
-      callCount += 1;
       inputs.push(inputHistorySnapshot(history));
-      if (callCount <= 2) {
-        throw new APIContextOverflowError(400, 'Context length exceeded', `req-compact-overflow-${String(callCount)}`);
+      if (inputs.length === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-compact-overflow');
       }
       return textResult('Reduced tool history summary.');
     };
@@ -1633,23 +1631,67 @@ describe('FullCompaction', () => {
       applyRecord = (entry as { args: { compactedCount?: number; droppedCount?: number } }).args;
     });
     const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
 
     await ctx.rpc.beginCompaction({});
     await compacted;
+    await completed;
 
-    expect(inputs).toHaveLength(3);
-    expect(inputs[1]?.map((entry) => entry.split(':', 1)[0])).toEqual([
-      'assistant',
-      'tool',
-      'user',
-    ]);
-    expect(inputs[2]?.map((entry) => entry.split(':', 1)[0])).toEqual(['user']);
-    expect(inputs[2]?.[0]).toBe('user: <compaction-instruction>');
+    expect(inputs).toHaveLength(2);
+    const reducedHistory = inputs[1]!.slice(0, -1);
+    expect(reducedHistory[0]?.split(':', 1)[0]).not.toBe('tool');
     // The whole 3-message history was folded (compactedCount), and all 3 were
     // trimmed from the summarizer input on overflow (droppedCount), so the
     // record honestly reports that the summary covers none of them.
     expect(applyRecord?.compactedCount).toBe(3);
     expect(applyRecord?.droppedCount).toBe(3);
+    await ctx.expectResumeMatches();
+  });
+
+  it('shrinks overflowing compaction input aggressively instead of one message at a time', async () => {
+    const inputs: string[][] = [];
+    let applyRecord: { compactedCount?: number; droppedCount?: number } | undefined;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      inputs.push(inputHistorySnapshot(history));
+      const compactedHistory = history.slice(0, -1);
+      if (compactedHistory.length > 20) {
+        throw new APIContextOverflowError(
+          400,
+          'Context length exceeded',
+          `req-long-compact-${String(inputs.length)}`,
+        );
+      }
+      return textResult('Aggressively reduced summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    for (let i = 0; i < 30; i++) {
+      ctx.appendExchange(
+        i,
+        `old user ${String(i)} ${'u'.repeat(400)}`,
+        `old assistant ${String(i)} ${'a'.repeat(400)}`,
+        10,
+      );
+    }
+    ctx.emitter.on('context.apply_compaction', (entry) => {
+      applyRecord = (entry as { args: { compactedCount?: number; droppedCount?: number } }).args;
+    });
+    const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(inputs[0]?.length).toBeGreaterThan(50);
+    expect(inputs.length).toBeLessThanOrEqual(4);
+    const finalCompactedHistory = inputs.at(-1)!.slice(0, -1);
+    expect(finalCompactedHistory[0]?.split(':', 1)[0]).not.toBe('tool');
+    expect(applyRecord?.compactedCount).toBe(60);
+    expect(applyRecord?.droppedCount).toBeGreaterThan(0);
     await ctx.expectResumeMatches();
   });
 
