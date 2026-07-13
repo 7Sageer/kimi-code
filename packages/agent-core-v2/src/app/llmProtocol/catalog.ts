@@ -159,3 +159,86 @@ export function catalogProviderModels(entry: CatalogProviderEntry): CatalogModel
     .map((model) => catalogModelToCapability(model))
     .filter((model): model is CatalogModel => model !== undefined);
 }
+
+/**
+ * models.dev provider ids searched for each wire type when the catalog serves
+ * as a capability fallback. Only first-party providers are mapped: a relay or
+ * gateway transparently proxies the upstream model, so the first-party entry
+ * carries the same boolean capabilities. The `kimi` wire is intentionally
+ * absent — its capabilities come from config declarations.
+ */
+const CATALOG_FALLBACK_PROVIDER_IDS: Partial<Record<ProviderType, readonly string[]>> = {
+  anthropic: ['anthropic'],
+  openai: ['openai'],
+  openai_responses: ['openai'],
+  'google-genai': ['google'],
+  vertexai: ['google-vertex', 'google-vertex-anthropic'],
+};
+
+/**
+ * Normalizes a catalog model key or configured model id so platform-specific
+ * id shapes still compare equal: Bedrock region (`us.`) / vendor (`anthropic.`)
+ * prefixes, Vertex `@version` suffixes, Bedrock `-v1:0` revisions, and trailing
+ * date stamps (`-20251001`, `-2024-05-13`).
+ */
+function normalizeCatalogModelKey(key: string): string {
+  return key
+    .toLowerCase()
+    .replace(/^(?:us|eu|apac|global)\./, '')
+    .replace(/^(?:anthropic|ai21|amazon|cohere|deepseek|meta|mistral|writer)\./, '')
+    .replace(/@.*$/, '')
+    .replace(/-v\d+(?::\d+)?$/, '')
+    .replace(/-\d{8}$/, '')
+    .replace(/-\d{4}-\d{2}-\d{2}$/, '');
+}
+
+/**
+ * Looks up a model's {@link ModelCapability} in a models.dev catalog snapshot.
+ * The lookup keys on wire type, not the user's provider id: a provider pointed
+ * at a relay base URL still proxies the first-party model, whose catalogued
+ * capabilities apply. An exact catalog key match takes precedence over the
+ * normalized comparison: several keys normalize to the same string (a base id
+ * and its dated snapshots), and the exact entry must not lose to JSON key
+ * order. Returns `undefined` on any miss (no catalog, unmapped wire, absent
+ * provider entry, unmatched or non-chat model) so callers can fall back to
+ * the built-in capability table.
+ */
+export function getCatalogModelCapability(
+  catalog: Catalog | undefined,
+  wire: ProviderType,
+  modelName: string,
+): ModelCapability | undefined {
+  if (catalog === undefined) return undefined;
+  const providerIds = CATALOG_FALLBACK_PROVIDER_IDS[wire];
+  if (providerIds === undefined) return undefined;
+  const target = normalizeCatalogModelKey(modelName);
+  for (const providerId of providerIds) {
+    const models = catalog[providerId]?.models;
+    if (models === undefined) continue;
+    const exact = models[modelName] ?? models[modelName.toLowerCase()];
+    if (exact !== undefined) {
+      const model = catalogModelToCapability(exact);
+      if (model !== undefined) return model.capability;
+    }
+    for (const [key, entry] of Object.entries(models)) {
+      if (normalizeCatalogModelKey(key) !== target) continue;
+      const model = catalogModelToCapability(entry);
+      if (model !== undefined) return model.capability;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Parses an optional pruned models.dev catalog string — typically the
+ * `__KIMI_CODE_BUILT_IN_CATALOG__` constant injected by tsdown at build
+ * time. Returns `undefined` when the argument is missing or invalid.
+ */
+export function loadBuiltInCatalog(json: string | undefined): Catalog | undefined {
+  if (typeof json !== 'string' || json.length === 0) return undefined;
+  try {
+    return JSON.parse(json) as Catalog;
+  } catch {
+    return undefined;
+  }
+}

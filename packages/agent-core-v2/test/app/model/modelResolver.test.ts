@@ -19,6 +19,8 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
+import { type Catalog } from '#/app/llmProtocol/catalog';
+import { ICatalogSnapshot } from '#/app/llmProtocol/catalogSnapshot';
 import { APIStatusError } from '#/app/llmProtocol/errors';
 import { type ModelConfig, IModelService } from '#/app/model/model';
 import { HostRequestHeaders, IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
@@ -39,6 +41,7 @@ describe('ModelResolverService', () => {
   let platforms: Record<string, PlatformConfig>;
   let models: Record<string, ModelConfig>;
   let configValues: Record<string, unknown>;
+  let catalogSnapshot: Catalog | undefined;
   let resolveTokenProvider: ReturnType<typeof vi.fn>;
   let createdProtocolConfigs: Record<string, unknown>[];
 
@@ -48,6 +51,7 @@ describe('ModelResolverService', () => {
     platforms = {};
     models = {};
     configValues = {};
+    catalogSnapshot = undefined;
     resolveTokenProvider = vi.fn();
     createdProtocolConfigs = [];
     generateImpl = async () => ({
@@ -91,6 +95,11 @@ describe('ModelResolverService', () => {
         });
         reg.define(IModelResolver, ModelResolverService);
         reg.defineInstance(IHostRequestHeaders, new HostRequestHeaders());
+        reg.definePartialInstance(ICatalogSnapshot, {
+          get catalog() {
+            return catalogSnapshot;
+          },
+        });
       },
     });
   });
@@ -715,6 +724,110 @@ describe('ModelResolverService', () => {
         tool_use: true,
         max_context_tokens: 128000,
         select_tools: false,
+      });
+    });
+  });
+
+  describe('catalog snapshot capabilities', () => {
+    // gpt-4o in the built-in table: image_in true, audio_in false. The snapshot
+    // entry below flips both (audio-only input), so a hit is distinguishable
+    // from the hardcoded fallback.
+    const openaiCatalog: Catalog = {
+      openai: {
+        id: 'openai',
+        models: {
+          'gpt-4o': {
+            id: 'gpt-4o',
+            limit: { context: 128000 },
+            tool_call: true,
+            modalities: { input: ['text', 'audio'], output: ['text'] },
+          },
+        },
+      },
+    };
+
+    function configureOpenAIModel(capabilities?: string[]): void {
+      providers['p'] = { type: 'openai', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        model: 'gpt-4o',
+        maxContextSize: 128000,
+        capabilities,
+      };
+    }
+
+    it('prefers the catalog snapshot over the built-in capability table', () => {
+      configureOpenAIModel();
+      catalogSnapshot = openaiCatalog;
+
+      expect(ix.get(IModelResolver).resolve('m').capabilities).toEqual({
+        image_in: false,
+        video_in: false,
+        audio_in: true,
+        thinking: false,
+        tool_use: true,
+        // max_context_tokens stays config-only; the catalog limit never wins.
+        max_context_tokens: 128000,
+        select_tools: false,
+      });
+    });
+
+    it('falls back to the built-in table when the catalog has no matching model', () => {
+      configureOpenAIModel();
+      catalogSnapshot = {
+        anthropic: {
+          id: 'anthropic',
+          models: {
+            'claude-sonnet-4-5': { id: 'claude-sonnet-4-5', limit: { context: 200000 } },
+          },
+        },
+      };
+
+      expect(ix.get(IModelResolver).resolve('m').capabilities).toMatchObject({
+        image_in: true,
+        audio_in: false,
+      });
+    });
+
+    it('falls back to the built-in table when no snapshot is seeded', () => {
+      configureOpenAIModel();
+
+      expect(ix.get(IModelResolver).resolve('m').capabilities).toMatchObject({
+        image_in: true,
+        audio_in: false,
+      });
+    });
+
+    it('ignores the catalog for the kimi wire', () => {
+      providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
+      models['m'] = { provider: 'p', model: 'gpt-4o', maxContextSize: 1000 };
+      catalogSnapshot = openaiCatalog;
+
+      expect(ix.get(IModelResolver).resolve('m').capabilities).toEqual({
+        image_in: false,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: false,
+        max_context_tokens: 1000,
+        select_tools: false,
+      });
+    });
+
+    it('OR-merges declared capabilities over catalog detection', () => {
+      configureOpenAIModel(['image_in', 'select_tools']);
+      catalogSnapshot = openaiCatalog;
+
+      expect(ix.get(IModelResolver).resolve('m').capabilities).toEqual({
+        // declared image_in wins over the catalog's false; the catalog's
+        // audio_in survives because declarations only OR, never clear.
+        image_in: true,
+        video_in: false,
+        audio_in: true,
+        thinking: false,
+        tool_use: true,
+        max_context_tokens: 128000,
+        select_tools: true,
       });
     });
   });

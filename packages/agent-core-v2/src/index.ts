@@ -60,6 +60,8 @@ import '#/app/event/eventService';
 export { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 export { IEventService, type DomainEvent as GlobalEvent } from '#/app/event/event';
 export * from '#/app/llmProtocol/capability';
+export * from '#/app/llmProtocol/catalog';
+export * from '#/app/llmProtocol/catalogSnapshot';
 export * from '#/app/llmProtocol/errors';
 export * from '#/app/llmProtocol/finishReason';
 export * from '#/app/llmProtocol/kimiOptions';

@@ -127,6 +127,7 @@ import { type Model } from '#/app/model/modelInstance';
 import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
 import { IModelResolver } from '#/app/model/modelResolver';
 import { ModelResolverService } from '#/app/model/modelResolverService';
+import { ICatalogSnapshot } from '#/app/llmProtocol/catalogSnapshot';
 import { IPlatformService } from '#/app/platform/platform';
 import { IProviderService } from '#/app/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
@@ -839,8 +840,9 @@ class ConfigBackedModelResolver extends ModelResolverService {
     @IOAuthService oauth: IOAuthService,
     @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders hostRequestHeaders: IHostRequestHeaders,
+    @ICatalogSnapshot catalogSnapshot: ICatalogSnapshot,
   ) {
-    super(config, providers, platforms, models, oauth, protocolRegistry, hostRequestHeaders);
+    super(config, providers, platforms, models, oauth, protocolRegistry, hostRequestHeaders, catalogSnapshot);
   }
 
   override resolve(id: string): Model {

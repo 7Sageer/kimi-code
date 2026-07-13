@@ -3,7 +3,9 @@
  *
  * Reads Model / Provider / Platform config, resolves the auth closure
  * (Platform.auth or Model-inline override), materializes a runnable
- * `Model` god-object via `ModelImpl`. Bound at App scope.
+ * `Model` god-object via `ModelImpl`. Detected capabilities come from the
+ * `llmProtocol` catalog snapshot (`ICatalogSnapshot`) first, falling back
+ * to the built-in capability table. Bound at App scope.
  *
  * Two config-driven paths:
  *   - **Structured** — `Model.providerId` points at a `[providers.*]` entry,
@@ -23,6 +25,8 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
 import { ErrorCodes, Error2 } from '#/errors';
 import { type ModelCapability } from '#/app/llmProtocol/capability';
+import { getCatalogModelCapability, type Catalog } from '#/app/llmProtocol/catalog';
+import { ICatalogSnapshot } from '#/app/llmProtocol/catalogSnapshot';
 import { type ProviderRequestAuth } from '#/app/llmProtocol/request';
 import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import { getModelCapability } from '#/app/llmProtocol/providers/providers';
@@ -70,6 +74,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     @IProtocolAdapterRegistry
     private readonly protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
+    @ICatalogSnapshot private readonly catalogSnapshot: ICatalogSnapshot,
   ) {
     super();
   }
@@ -119,6 +124,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       protocol,
       wireName,
       model.maxContextSize,
+      this.catalogSnapshot.catalog,
     );
     const providerOptions = buildProtocolProviderOptions(
       model,
@@ -335,9 +341,12 @@ function resolveModelCapabilities(
   protocol: Protocol,
   wireName: string,
   maxContextSize: number,
+  catalog: Catalog | undefined,
 ): ModelCapability {
   const declared = new Set((declaredCapabilities ?? []).map((c) => c.trim().toLowerCase()));
-  const detected = getModelCapability(protocol, wireName);
+  const detected =
+    getCatalogModelCapability(catalog, protocol, wireName) ??
+    getModelCapability(protocol, wireName);
   return {
     image_in: declared.has('image_in') || detected.image_in,
     video_in: declared.has('video_in') || detected.video_in,

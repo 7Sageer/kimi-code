@@ -50,6 +50,10 @@ export function createProvider(config: ProviderConfig): ChatProvider {
  * Unknown / uncatalogued models (and the Kimi wire, whose capabilities come
  * from the host's catalog/config rather than the model name) return
  * {@link UNKNOWN_CAPABILITY} so capability checks stay non-fatal.
+ *
+ * Legacy fallback only: callers should prefer the models.dev catalog lookup
+ * (`getCatalogModelCapability`) and treat this table as frozen — see the
+ * notice in `./capability-registry`.
  */
 export function getModelCapability(wire: ProviderType, modelName: string): ModelCapability {
   switch (wire) {

@@ -18,6 +18,7 @@ import { startServer, type ServerLogger } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
+import { BUILT_IN_CATALOG_JSON } from '#/built-in-catalog';
 import { isKimiV2Enabled } from '#/cli/experimental-v2';
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
@@ -411,7 +412,7 @@ async function runServerInProcess(
     // its agent-core-v2 engine are only resolved when the flag is on.
     const { createServerLogger: createServerV2Logger, startServer: startServerV2 } =
       await import('@moonshot-ai/kap-server');
-    const { hostRequestHeadersSeed } = await import('@moonshot-ai/agent-core-v2');
+    const { hostRequestHeadersSeed, loadBuiltInCatalog } = await import('@moonshot-ai/agent-core-v2');
     const logger = createServerV2Logger({ level: options.logLevel });
     const v2 = await startServerV2({
       host: options.host,
@@ -429,6 +430,7 @@ async function runServerInProcess(
       // X-Msh-* identity as direct CLI runs.
       seeds: hostRequestHeadersSeed(buildKimiDefaultHeaders(version)),
       webAssetsDir: serverWebAssetsDir(),
+      catalog: loadBuiltInCatalog(BUILT_IN_CATALOG_JSON),
     });
     // v2's connection registry exposes no count-change hook, so forward
     // add/remove to the daemon's idle-shutdown handler (a no-op when `idle`

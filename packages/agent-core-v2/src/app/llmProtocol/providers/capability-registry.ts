@@ -1,3 +1,10 @@
+/**
+ * FROZEN: this static prefix table is the legacy last-resort fallback behind
+ * the models.dev catalog lookup (see ../catalog.ts `getCatalogModelCapability`).
+ * Do not add new models here — new coverage comes from the catalog snapshot.
+ * The table only serves hosts/builds without a bundled catalog and model ids
+ * the catalog does not cover; delete it once a snapshot is always available.
+ */
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '../capability';
 
 type CapabilityMatcher = (normalizedModelName: string) => boolean;
