@@ -161,6 +161,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     'onWillCloseSession',
   ]);
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  private readonly inFlightOperations = new Set<Promise<unknown>>();
+  private closing = false;
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -187,7 +189,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     super();
   }
 
+  beginClose(): Promise<void> {
+    this.closing = true;
+    return Promise.allSettled([...this.inFlightOperations, ...this.resuming.values()]).then(() => undefined);
+  }
+
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
+    this.assertOpen();
+    return this.trackOperation(this.doCreate(opts));
+  }
+
+  private async doCreate(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const entry = await this.materializeSession({ ...opts, sessionId });
     const handle = entry.handle;
@@ -315,6 +327,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
+    if (this.closing) return Promise.reject(this.lifecycleClosingError());
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
     const live = this.get(sessionId);
@@ -553,6 +566,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   async fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
+    this.assertOpen();
+    return this.trackOperation(this.doFork(opts));
+  }
+
+  private async doFork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
     const sourceId = opts.sourceSessionId;
 
     const sourceHandle = this.get(sourceId);
@@ -662,6 +680,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   async createChild(opts: CreateChildSessionOptions): Promise<ISessionScopeHandle> {
+    this.assertOpen();
     const title =
       opts.title ??
       `Child: ${(await this.resolveSourceTitle(opts.sourceSessionId)) ?? opts.sourceSessionId}`;
@@ -792,8 +811,26 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   override dispose(): void {
+    this.closing = true;
     for (const entry of this.entries.values()) this.dirtyAbortSession(entry);
     super.dispose();
+  }
+
+  private assertOpen(): void {
+    if (this.closing) throw this.lifecycleClosingError();
+  }
+
+  private lifecycleClosingError(): Error2 {
+    return new Error2(ErrorCodes.SESSION_CLOSED, 'session lifecycle is closing');
+  }
+
+  private trackOperation<T>(promise: Promise<T>): Promise<T> {
+    this.inFlightOperations.add(promise);
+    const remove = (): void => {
+      this.inFlightOperations.delete(promise);
+    };
+    promise.then(remove, remove);
+    return promise;
   }
 
   private onLeaseLost(sessionId: string): void {

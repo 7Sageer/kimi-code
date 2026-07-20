@@ -576,6 +576,7 @@ const noopHookRunner: IExternalHooksRunnerService = {
 const noopHostFsWatchService: IHostFsWatchService = {
   _serviceBrand: undefined,
   watch: () => ({
+    ready: Promise.resolve(),
     onDidChange: Event.None as Event<HostFsChange>,
     dispose: () => {},
   }),

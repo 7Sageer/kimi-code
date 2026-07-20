@@ -15,6 +15,7 @@
  * down.
  */
 
+import { ErrorCode } from '../../../protocol/error-codes';
 import { WS_PROTOCOL_VERSION, type SessionCursor } from '../../../protocol/ws-control';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
@@ -37,6 +38,7 @@ import {
   type ResyncReason,
   type SessionEventBroadcaster,
 } from './sessionEventBroadcaster';
+import type { SessionOwnershipDetails } from '@moonshot-ai/agent-core-v2';
 import { FsWatchBridge } from './fsWatchBridge';
 import { SkillCatalogBridge } from './skillCatalogBridge';
 
@@ -199,7 +201,9 @@ export class WsConnectionV1 implements BroadcastTarget {
     const agentFilter = parseAgentFilter(payload['agent_filter']);
 
     const accepted: string[] = [];
+    const notFound: string[] = [];
     const resyncRequired: string[] = [];
+    const ownershipDetails: Record<string, SessionOwnershipDetails> = {};
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of subscriptions) {
@@ -208,15 +212,20 @@ export class WsConnectionV1 implements BroadcastTarget {
         cursors?.[sid],
         agentFilter?.[sid],
         accepted,
+        notFound,
         resyncRequired,
+        ownershipDetails,
         serverCursors,
       );
     }
 
+    const hasOwnershipFailure = Object.keys(ownershipDetails).length > 0;
     this.sendFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
+      buildAck(frame.id ?? '', hasOwnershipFailure ? ErrorCode.SESSION_HELD_BY_PEER : 0, hasOwnershipFailure ? 'session held by peer' : 'success', {
         accepted_subscriptions: accepted,
+        not_found: notFound,
         resync_required: resyncRequired,
+        ownership_details: ownershipDetails,
         cursors: serverCursors,
       }),
     );
@@ -231,13 +240,16 @@ export class WsConnectionV1 implements BroadcastTarget {
     const accepted: string[] = [];
     const notFound: string[] = [];
     const resyncRequired: string[] = [];
+    const ownershipDetails: Record<string, SessionOwnershipDetails> = {};
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of sessionIds) {
       const filter = agentFilter?.[sid];
       const ok = await this.broadcaster.subscribe(sid, this, filter);
       if (!ok) {
-        notFound.push(sid);
+        const ownership = await this.broadcaster.getSubscriptionFailure?.(sid);
+        if (ownership !== undefined) ownershipDetails[sid] = ownership;
+        else notFound.push(sid);
         continue;
       }
       this.subscriptions.set(sid, filter);
@@ -252,11 +264,13 @@ export class WsConnectionV1 implements BroadcastTarget {
       }
     }
 
+    const hasOwnershipFailure = Object.keys(ownershipDetails).length > 0;
     this.sendFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
+      buildAck(frame.id ?? '', hasOwnershipFailure ? ErrorCode.SESSION_HELD_BY_PEER : 0, hasOwnershipFailure ? 'session held by peer' : 'success', {
         accepted,
         not_found: notFound,
         resync_required: resyncRequired,
+        ownership_details: ownershipDetails,
         cursors: serverCursors,
       }),
     );
@@ -314,12 +328,16 @@ export class WsConnectionV1 implements BroadcastTarget {
     cursor: SessionCursor | undefined,
     filter: AgentFilter | undefined,
     accepted: string[],
+    notFound: string[],
     resyncRequired: string[],
+    ownershipDetails: Record<string, SessionOwnershipDetails>,
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
     const ok = await this.broadcaster.subscribe(sid, this, filter);
     if (!ok) {
-      resyncRequired.push(sid);
+      const ownership = await this.broadcaster.getSubscriptionFailure?.(sid);
+      if (ownership !== undefined) ownershipDetails[sid] = ownership;
+      else notFound.push(sid);
       return;
     }
     this.subscriptions.set(sid, filter);

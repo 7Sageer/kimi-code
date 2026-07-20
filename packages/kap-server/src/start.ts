@@ -327,6 +327,8 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     return closePromise;
   };
   const doClose = async (): Promise<void> => {
+    const lifecycle = core.accessor.get(ISessionLifecycleService);
+    const lifecycleDrain = lifecycle.beginClose();
     // Stop the sessions-tree watcher first: a debounced hint firing mid-close
     // would publish into an event bus whose subscribers are already unwinding.
     sessionListWatch?.dispose();
@@ -342,8 +344,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     // dispatches: an `ensureState` resumed after its session's scope died
     // would abandon its event (e.g. `event.session.created` for a session
     // created right before shutdown), and its journal entry with it.
-    await broadcaster.drainDispatches();
-    const lifecycle = core.accessor.get(ISessionLifecycleService);
+    await Promise.all([lifecycleDrain, broadcaster.drainDispatches()]);
     for (const handle of lifecycle.list()) {
       try {
         await lifecycle.close(handle.id);
@@ -361,6 +362,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   const connectionRegistry = new ConnectionRegistry();
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
+    homeDir,
     core,
     logger,
   });
