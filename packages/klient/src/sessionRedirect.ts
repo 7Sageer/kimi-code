@@ -23,11 +23,12 @@
  *                                            an external / older process:
  *                                            terminal safety stop
  *
- * `KlientConnection` owns the per-client current origin plus the follow/retry
- * policy and is shared by the `SessionRedirectChannel` decorator, so once one
- * call redirects, all later calls — on every facade handle the klient handed
- * out — land on the holder. Both policies are bounded per original call
- * (`maxRedirects`, `maxCreatingRetries`) so redirect ping-pong cannot spin.
+ * `KlientConnection` owns the redirect routes plus the follow/retry policy and
+ * is shared by the `SessionRedirectChannel` decorator. Session routes are
+ * isolated by `sessionId`, while the legacy `currentUrl` getter continues to
+ * expose the most recently selected origin. Both policies are bounded per
+ * original call (`maxRedirects`, `maxCreatingRetries`) so redirect ping-pong
+ * cannot spin.
  */
 
 import type {
@@ -128,7 +129,7 @@ export interface SessionRedirectInfo {
   /** Origin the request was sent to, e.g. `http://127.0.0.1:58627`. */
   readonly from: string;
   /**
-   * Holder origin the client switched to; every later request lands there.
+   * Holder origin the client switched to; later requests for this route land there.
    * This is the address to surface as "connected to the instance holding
    * the session (<to>)".
    */
@@ -157,13 +158,14 @@ const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Shared per-client redirect state: the current target origin (mutated by a
- * followed redirect), the resolved policy, and the redirect listeners. The
- * channel reads the origin from here on every attempt, so a redirect
- * re-points the whole client, not one request.
+ * Shared per-client redirect state: the target origin for each session, the
+ * legacy most-recent target, the resolved policy, and redirect listeners.
+ * Session calls read their own route on every attempt, so one holder cannot
+ * overwrite another session's route.
  */
 export class KlientConnection {
   private url: string;
+  private readonly sessionUrls = new Map<string, string>();
   readonly follow: boolean;
   readonly maxRedirects: number;
   readonly maxCreatingRetries: number;
@@ -184,6 +186,10 @@ export class KlientConnection {
     return this.url;
   }
 
+  currentUrlFor(sessionId: string | undefined): string {
+    return sessionId === undefined ? this.url : (this.sessionUrls.get(sessionId) ?? this.url);
+  }
+
   onRedirect(listener: (info: SessionRedirectInfo) => void): IDisposable {
     this.redirectListeners.add(listener);
     return { dispose: () => this.redirectListeners.delete(listener) };
@@ -194,11 +200,16 @@ export class KlientConnection {
    * origin, or `undefined` when the holder address already equals the current
    * origin (a self-redirect is a loop, handled as an error by the caller).
    */
-  applyRedirect(address: string): string | undefined {
+  applyRedirect(address: string, sessionId?: string): string | undefined {
     const next = normalizeInstanceOrigin(address);
-    if (next === this.url) return undefined;
-    const previous = this.url;
-    this.url = next;
+    const previous = this.currentUrlFor(sessionId);
+    if (next === previous) return undefined;
+    if (sessionId === undefined) {
+      this.url = next;
+    } else {
+      this.sessionUrls.set(sessionId, next);
+      this.url = next;
+    }
     return previous;
   }
 
@@ -237,23 +248,38 @@ export class SessionRedirectChannel implements KlientChannel {
   private readonly token?: string;
   private readonly fetchImpl?: typeof fetch;
   private readonly WebSocketImpl?: WsLikeCtor;
-  private inner: HttpChannel;
+  private readonly inners = new Map<string, HttpChannel>();
 
   constructor(opts: SessionRedirectChannelOptions) {
     this.connection = opts.connection;
     this.token = opts.token;
     this.fetchImpl = opts.fetch;
     this.WebSocketImpl = opts.WebSocketImpl;
-    this.inner = this.buildInner();
   }
 
-  private buildInner(): HttpChannel {
-    return new HttpChannel({
-      url: this.connection.currentUrl,
+  private routeKey(sessionId: string | undefined): string {
+    return sessionId ?? '';
+  }
+
+  private innerFor(sessionId: string | undefined): HttpChannel {
+    const key = this.routeKey(sessionId);
+    const existing = this.inners.get(key);
+    if (existing !== undefined) return existing;
+    const inner = new HttpChannel({
+      url: this.connection.currentUrlFor(sessionId),
       token: this.token,
       fetch: this.fetchImpl,
       WebSocketImpl: this.WebSocketImpl,
     });
+    this.inners.set(key, inner);
+    return inner;
+  }
+
+  private resetInner(sessionId: string | undefined): void {
+    const key = this.routeKey(sessionId);
+    const stale = this.inners.get(key);
+    this.inners.delete(key);
+    void stale?.close().catch(() => {});
   }
 
   async call(scope: ScopeRef, service: string, method: string, args: unknown[]): Promise<unknown> {
@@ -262,8 +288,10 @@ export class SessionRedirectChannel implements KlientChannel {
     let creatingRetries = 0;
     const trace: string[] = [];
     for (;;) {
+      const attemptUrl = connection.currentUrlFor(scope.sessionId);
+      const inner = this.innerFor(scope.sessionId);
       try {
-        return await this.inner.call(scope, service, method, args);
+        return await inner.call(scope, service, method, args);
       } catch (error) {
         const details = readSessionOwnershipDetails(error);
         if (details === undefined) throw error;
@@ -298,22 +326,26 @@ export class SessionRedirectChannel implements KlientChannel {
                   'still held elsewhere — giving up to avoid a redirect loop',
               );
             }
-            const previous = connection.applyRedirect(target);
-            if (previous === undefined) {
+            if (target === attemptUrl) {
               throw enrichOwnershipError(
                 error,
                 `the holder address ${target} is this very instance, yet the request was refused; ` +
                   'lease and server disagree — retry shortly, or force-unlock the session lease',
               );
             }
+            const previous = connection.applyRedirect(target, scope.sessionId);
             follows += 1;
-            trace.push(`${previous} → ${target}`);
+            trace.push(`${previous ?? attemptUrl} → ${target}`);
             // Rebuild the inner channel onto the holder BEFORE notifying, so
             // listeners that re-subscribe already land on the new origin.
-            const stale = this.inner;
-            this.inner = this.buildInner();
-            void stale.close().catch(() => {});
-            connection.notifyRedirect({ from: previous, to: target, follow: follows });
+            if (previous !== undefined) {
+              this.resetInner(scope.sessionId);
+              // Global calls have no session route, so preserve the legacy
+              // behavior that a session redirect also invalidates global
+              // event subscriptions tied to the previous currentUrl.
+              if (scope.sessionId !== undefined) this.resetInner(undefined);
+              connection.notifyRedirect({ from: previous, to: target, follow: follows });
+            }
             continue;
           }
           case 'creating': {
@@ -359,11 +391,13 @@ export class SessionRedirectChannel implements KlientChannel {
     handler: (data: unknown) => void,
     onError?: (error: Error) => void,
   ): IDisposable {
-    return this.inner.listen(scope, source, handler, onError);
+    return this.innerFor(scope.sessionId).listen(scope, source, handler, onError);
   }
 
   close(): Promise<void> {
-    return this.inner.close();
+    const inners = [...this.inners.values()];
+    this.inners.clear();
+    return Promise.all(inners.map((inner) => inner.close())).then(() => undefined);
   }
 }
 

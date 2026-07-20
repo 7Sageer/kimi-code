@@ -66,7 +66,47 @@ function rig(
 const readS1 = (channel: SessionRedirectChannel): Promise<unknown> =>
   channel.call({ sessionId: 's1' }, 'sessionMetadata', 'read', []);
 
+const readSession = (channel: SessionRedirectChannel, sessionId: string): Promise<unknown> =>
+  channel.call({ sessionId }, 'sessionMetadata', 'read', []);
+
 describe('session ownership redirect (SESSION_HELD_BY_PEER)', () => {
+  it('isolates concurrent session redirects to different holders', async () => {
+    const firstRequests: Array<{ url: string; resolve: (response: Response) => void }> = [];
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const url = String(input);
+      if (firstRequests.length < 2) {
+        return new Promise<Response>((resolve) => {
+          firstRequests.push({ url, resolve });
+        });
+      }
+      return Promise.resolve(okEnvelope({ id: url.includes('/session/a/') ? 'a' : 'b' }));
+    });
+    const { channel } = rig(fetchMock);
+
+    const a = readSession(channel, 'a');
+    const b = readSession(channel, 'b');
+    await tick();
+    expect(firstRequests.map(({ url }) => url)).toEqual([
+      `${PEER}/api/v2/session/a/sessionMetadata/read`,
+      `${PEER}/api/v2/session/b/sessionMetadata/read`,
+    ]);
+
+    firstRequests[1]!.resolve(
+      heldByPeer({ kind: 'held-by-peer', phase: 'routable', address: HOLDER }),
+    );
+    firstRequests[0]!.resolve(
+      heldByPeer({ kind: 'held-by-peer', phase: 'routable', address: 'http://127.0.0.1:60003' }),
+    );
+
+    await expect(Promise.all([a, b])).resolves.toEqual([{ id: 'a' }, { id: 'b' }]);
+    expect(urls(fetchMock)).toEqual([
+      `${PEER}/api/v2/session/a/sessionMetadata/read`,
+      `${PEER}/api/v2/session/b/sessionMetadata/read`,
+      `${HOLDER}/api/v2/session/b/sessionMetadata/read`,
+      `http://127.0.0.1:60003/api/v2/session/a/sessionMetadata/read`,
+    ]);
+  });
+
   it('follows a routable redirect: rebases onto the holder, re-sends the call, emits the signal', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

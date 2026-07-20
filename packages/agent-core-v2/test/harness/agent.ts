@@ -138,6 +138,12 @@ import { ISessionQuestionService, type QuestionResult } from '#/session/question
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionSwarmService } from '#/session/swarm/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
+import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
+import {
+  IHostFsWatchService,
+  type HostFsChange,
+} from '#/os/interface/hostFsWatch';
 
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
@@ -444,6 +450,7 @@ export function homeDirServices(homeDir: string | undefined): TestAgentServiceOv
     if (homeDir !== undefined) {
       for (const [id, value] of bootstrapSeed({
         homeDir,
+        osHomeDir: homeDir,
         cwd: process.cwd(),
         env: process.env,
       })) {
@@ -564,6 +571,14 @@ const noopHookRunner: IExternalHooksRunnerService = {
   trigger: async () => [],
   triggerBlock: async () => undefined,
   fireAndForgetTrigger: async () => [],
+};
+
+const noopHostFsWatchService: IHostFsWatchService = {
+  _serviceBrand: undefined,
+  watch: () => ({
+    onDidChange: Event.None as Event<HostFsChange>,
+    dispose: () => {},
+  }),
 };
 
 export function permissionModeServices(mode: PermissionMode): TestAgentServiceOverride {
@@ -906,6 +921,13 @@ export class AgentTestContext {
           })) {
             reg.defineInstance(id, value);
           }
+          const authorityRegistry = new WriteAuthorityRegistryService();
+          authorityRegistry.register({
+            sessionId,
+            assertWritable: () => {},
+          });
+          reg.defineInstance(IWriteAuthorityRegistry, authorityRegistry);
+          reg.defineInstance(IHostFsWatchService, noopHostFsWatchService);
           const memoryStorage = (): SyncDescriptor<IFileSystemStorageService> =>
             new SyncDescriptor(InMemoryStorageService, [], true);
           reg.defineDescriptor(IFileSystemStorageService, memoryStorage());

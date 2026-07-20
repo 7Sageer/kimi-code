@@ -29,7 +29,7 @@ export interface HttpKlientOptions
 }
 
 export interface HttpKlient extends Klient {
-  /** Origin every later call targets; changes after a followed redirect. */
+  /** Most recently selected origin; session calls keep isolated routes internally. */
   readonly currentUrl: string;
 }
 
