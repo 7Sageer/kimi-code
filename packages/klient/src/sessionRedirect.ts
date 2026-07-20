@@ -11,10 +11,11 @@
  *
  *   - held-by-peer / routable                follow `address`: rebase onto the
  *                                            holder origin and re-send the call
- *   - held-by-peer / creating                lease file mid-creation: wait
+ *   - held-by-peer / creating                kernel lock held before owner
+ *                                            metadata is visible: wait
  *                                            `retry_after_ms`, retry the SAME
  *                                            instance
- *   - held-by-peer / holder-unresponsive     holder pid alive, heartbeat stale:
+ *   - held-by-peer / holder-unresponsive     legacy heartbeat-based response:
  *                                            terminal for auto-recovery
  *   - held-by-peer / held-by-local-instance  holder has no address (embedded
  *                                            engine / CLI): terminal, never
@@ -59,7 +60,7 @@ export interface HeldByPeerDetails {
   readonly phase: SessionOwnershipPhase;
   /** Present only when phase === 'routable'. */
   readonly address?: string;
-  /** Retry hint (ms) for 'creating' / 'holder-unresponsive'. */
+  /** Retry hint (ms) for `creating` or legacy `holder-unresponsive`. */
   readonly retry_after_ms?: number;
 }
 
@@ -330,7 +331,7 @@ export class SessionRedirectChannel implements KlientChannel {
               throw enrichOwnershipError(
                 error,
                 `the holder address ${target} is this very instance, yet the request was refused; ` +
-                  'lease and server disagree — retry shortly, or force-unlock the session lease',
+                  'lease and server disagree — retry shortly or restart the holding instance',
               );
             }
             const previous = connection.applyRedirect(target, scope.sessionId);
@@ -367,17 +368,17 @@ export class SessionRedirectChannel implements KlientChannel {
                 : '';
             throw enrichOwnershipError(
               error,
-              `the session is held by a peer instance that is not responding${retryHint}: its process ` +
-                'is alive but its lease heartbeat is stale. Open the session from that instance, ' +
-                'retry later, or stop the holder and force-unlock the lease to take over here',
+              `the session is held by a peer instance that reported an unresponsive holder${retryHint}. ` +
+                'This response comes from an older heartbeat-based server; retry later or stop the ' +
+                'holding process before opening the session here',
             );
           }
           case 'held-by-local-instance': {
             throw enrichOwnershipError(
               error,
               'the session is held by a local instance without a network address (an embedded engine ' +
-                'or CLI process); it cannot be reached from here — close the holding process (or ' +
-                'force-unlock the lease) before opening the session elsewhere',
+                'or CLI process); it cannot be reached from here — close the holding process before ' +
+                'opening the session elsewhere',
             );
           }
         }

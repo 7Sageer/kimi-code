@@ -256,12 +256,12 @@ describe('session ownership redirect (SESSION_HELD_BY_PEER)', () => {
     {
       name: 'holder-unresponsive',
       details: { kind: 'held-by-peer', phase: 'holder-unresponsive', retry_after_ms: 2000 },
-      message: /not responding.*2000ms.*force-unlock/s,
+      message: /unresponsive holder.*2000ms.*older heartbeat-based server.*stop the holding process/s,
     },
     {
       name: 'held-by-local-instance',
       details: { kind: 'held-by-peer', phase: 'held-by-local-instance' },
-      message: /without a network address.*force-unlock/s,
+      message: /without a network address.*close the holding process/s,
     },
     {
       name: 'unregistered-writer',
