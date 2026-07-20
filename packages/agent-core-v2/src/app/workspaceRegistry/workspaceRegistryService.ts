@@ -10,12 +10,11 @@
  * re-reads the file on every call), so a write-through cache would clobber
  * external additions and tombstones with stale state.
  *
- * Two exclusion layers make each read-modify-write safe (design:
- * `.tmp/refactor-watch-design-v2.md` §3.6): the in-process promise chain
- * serializes ops (entered first, so cross-process waiting stays minimal),
- * and an `ICrossProcessLockService` file lock (`workspaces.json.lock`, from
- * `crossProcessLock`, resolved against the `bootstrap` home dir) makes the
- * load → mutate → save burst atomic against other lock-aware v2 processes.
+ * Two exclusion layers make each read-modify-write safe: the in-process promise
+ * chain serializes ops (entered first, so cross-process waiting stays minimal),
+ * and the persistence store's transaction primitive locks the physical
+ * `workspaces.json` path, making the load → mutate → save burst atomic against
+ * other lock-aware v2 processes.
  * Unregistered writers (v1) stay best-effort: their lost updates are healed
  * by the session-index merge. Tombstone logic, format and key names are
  * unchanged, and unknown document fields round-trip verbatim via
@@ -64,19 +63,13 @@
  * sibling buckets at once without rewriting any stored id.
  */
 
-import { basename, isAbsolute, join } from 'pathe';
+import { basename, isAbsolute } from 'pathe';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  type CrossProcessLockAcquireOptions,
-  ICrossProcessLockService,
-  type CrossProcessLockWaitOptions,
-} from '#/os/interface/crossProcessLock';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { IWorkspaceRegistry, type Workspace, type WorkspaceUpdate } from './workspaceRegistry';
@@ -87,10 +80,6 @@ import { IWorkspacePersistence, type WorkspaceCatalog } from './workspacePersist
 // `<homeDir>/<key>` (join skips empty segments).
 const SESSION_INDEX_SCOPE = '';
 const SESSION_INDEX_KEY = 'session_index.jsonl';
-
-const WORKSPACES_CATALOG_LOCK_OPTIONS: CrossProcessLockAcquireOptions & {
-  wait: CrossProcessLockWaitOptions;
-} = { wait: { timeoutMs: 10_000 } };
 
 const textDecoder = new TextDecoder();
 
@@ -106,17 +95,12 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   /** Whether the once-per-process session-index sync already ran. */
   private merged = false;
   private opQueue: Promise<unknown> = Promise.resolve();
-  private readonly catalogLockPath: string;
 
   constructor(
     @IWorkspacePersistence private readonly store: IWorkspacePersistence,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @IBootstrapService bootstrap: IBootstrapService,
-    @ICrossProcessLockService private readonly lock: ICrossProcessLockService,
-  ) {
-    this.catalogLockPath = join(bootstrap.homeDir, 'workspaces.json.lock');
-  }
+  ) {}
 
   list(): Promise<readonly Workspace[]> {
     return this.runExclusive(async () => {
@@ -404,8 +388,7 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   }
 
   private runExclusive<T>(op: () => Promise<T>): Promise<T> {
-    const locked = (): Promise<T> =>
-      this.lock.withLock(this.catalogLockPath, WORKSPACES_CATALOG_LOCK_OPTIONS, op);
+    const locked = (): Promise<T> => this.store.runExclusive(op);
     const next = this.opQueue.then(locked, locked);
     this.opQueue = next.then(
       () => {},

@@ -32,6 +32,10 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
 
   constructor(@IAtomicDocumentStore private readonly docs: IAtomicDocumentStore) {}
 
+  runExclusive<T>(op: () => Promise<T>): Promise<T> {
+    return this.docs.runExclusive(WORKSPACE_REGISTRY_SCOPE, WORKSPACE_REGISTRY_KEY, op);
+  }
+
   async load(): Promise<WorkspaceCatalog | undefined> {
     const file = await this.docs.get<Record<string, unknown>>(
       WORKSPACE_REGISTRY_SCOPE,

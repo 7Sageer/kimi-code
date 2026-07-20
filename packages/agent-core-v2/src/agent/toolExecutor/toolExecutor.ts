@@ -9,7 +9,10 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type {
+  ToolBeforeExecuteContext,
+  ToolDidExecuteContext,
+} from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { OrderedHookSlot } from '#/hooks';
 import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';

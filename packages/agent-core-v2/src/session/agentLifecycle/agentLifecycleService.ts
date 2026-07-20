@@ -213,9 +213,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle.accessor.get(IImageConfigBridge);
     handle.accessor.get(IAgentToolDedupeService);
     handle.accessor.get(IAgentExternalHooksService);
-    // File fencing hooks Read/Write/Edit on the shared Session file ledger:
-    // resolve after externalHooks so permission/external hook participants
-    // register first on the executor's hook slots.
+    // File fencing wraps Read/Write/Edit execution on the shared Session file
+    // ledger. Resolve after externalHooks so permission and external preflight
+    // participants register first.
     handle.accessor.get(IAgentFileFencingService);
     handle.accessor.get(IAgentMcpService);
     // Agent plugin service: registers main-agent-only plugin session-start

@@ -31,7 +31,10 @@ import {
   type ToolResult,
   type ToolUpdate,
 } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type {
+  ToolBeforeExecuteContext,
+  ToolDidExecuteContext,
+} from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
@@ -365,14 +368,22 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     }
 
     const executionMetadata = decision?.executionMetadata;
+    const runnableExecution =
+      decision?.execute === undefined ? execution : { ...execution, execute: decision.execute };
 
     this.dispatchToolCall(call, call.args, options, displayFields);
 
     return {
       task: {
-        accesses: execution.accesses ?? ToolAccesses.all(),
+        accesses: runnableExecution.accesses ?? ToolAccesses.all(),
         execute: async (taskSignal) =>
-          this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
+          this.runSingleExecution(
+            call,
+            runnableExecution,
+            executionMetadata,
+            options,
+            taskSignal,
+          ),
       },
       stopBatchAfterThis: execution.stopBatchAfterThis,
     };

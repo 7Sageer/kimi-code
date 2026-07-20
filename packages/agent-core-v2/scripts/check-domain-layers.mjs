@@ -123,6 +123,7 @@ const DOMAIN_LAYER = new Map([
   ['sessionSkillCatalog', 3],
   ['permissionGate', 3],
   ['flag', 3],
+  ['multiServer', 3],
   ['toolExecutor', 3],
   ['toolResultTruncation', 3],
   ['toolRegistry', 3],

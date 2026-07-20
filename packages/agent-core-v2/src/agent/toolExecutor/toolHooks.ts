@@ -33,6 +33,7 @@ export interface AuthorizeToolExecutionResult {
   readonly reason?: string | undefined;
   readonly syntheticResult?: ExecutableToolResult | undefined;
   readonly executionMetadata?: unknown;
+  readonly execute?: RunnableToolExecution['execute'];
 }
 
 export interface PrepareToolExecutionResult extends AuthorizeToolExecutionResult {
