@@ -11,7 +11,7 @@ import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ISessionProcessRunner } from '#/session/process/processRunner';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
@@ -25,6 +25,10 @@ import {
 interface PlanFakes {
   readonly fs: IHostFileSystem;
   readonly runner: ISessionProcessRunner;
+}
+
+function textFileStat(content: string = ''): HostFileStat {
+  return { isFile: true, isDirectory: false, size: Buffer.byteLength(content) };
 }
 
 function createPlanFakes(overrides: Partial<IHostFileSystem> = {}): PlanFakes {
@@ -56,6 +60,7 @@ function createPlanFileFakes(
   const readText = vi.fn(async (path: string) => files.get(path) ?? '');
   const writeText = vi.fn(async (path: string, content: string) => {
     files.set(path, content);
+    return textFileStat(content);
   });
   return {
     files,
@@ -172,7 +177,7 @@ describe('Plan service', () => {
 
     it('enters plan mode without starting a model turn and prepares the plan directory', async () => {
       const mkdir = vi.fn().mockResolvedValue(undefined);
-      const writeText = vi.fn().mockResolvedValue(0);
+      const writeText = vi.fn().mockResolvedValue(textFileStat());
       const cwd = await makeTempDir('kimi-plan-entry-');
       useFakes(createPlanFakes({ mkdir, writeText }));
       profile.update({ cwd });
@@ -192,7 +197,7 @@ describe('Plan service', () => {
     it('derives the plan path from the agent homedir on enter and restore', async () => {
       const cwd = await makeTempDir('kimi-plan-path-');
       useFakes(createPlanFakes({
-        writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
+        writeText: vi.fn(async () => textFileStat()),
       }));
       profile.update({ cwd });
       await plan.enter('stable-plan');
@@ -219,7 +224,7 @@ describe('Plan service', () => {
 
     it('keeps the plan path under the agent homedir when the profile cwd is empty', async () => {
       useFakes(createPlanFakes({
-        writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
+        writeText: vi.fn(async () => textFileStat()),
       }));
       profile.update({ cwd: '' });
 
@@ -475,8 +480,9 @@ describe('Plan service', () => {
       async (toolName) => {
         const files = new Map<string, string>();
         const readText = vi.fn(async (path: string) => files.get(path) ?? '');
-        const writeText = vi.fn(async (path: string, content: string): Promise<void> => {
+        const writeText = vi.fn(async (path: string, content: string) => {
           files.set(path, content);
+          return textFileStat(content);
         });
         useFakes(createPlanFakes({ readText, writeText }));
         const cwd = await makeTempDir('kimi-plan-write-tool-');
@@ -516,8 +522,9 @@ describe('Plan service', () => {
 
     it('keeps explicit deny rules above active plan file writes', async () => {
       const files = new Map<string, string>();
-      const writeText = vi.fn(async (path: string, content: string): Promise<void> => {
+      const writeText = vi.fn(async (path: string, content: string) => {
         files.set(path, content);
+        return textFileStat(content);
       });
       useFakes(createPlanFakes({ writeText }));
       const cwd = await makeTempDir('kimi-plan-deny-write-');
