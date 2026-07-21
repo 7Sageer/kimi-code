@@ -3,7 +3,7 @@
  * at the WRONG instance follows the `session.held_by_peer` (40921) `routable`
  * answer onto the holder origin — and every later call lands on the holder.
  *
- * In-process `startServerPair` (shared home, `multi_server` flag, port 0).
+ * In-process `startServerPair` (shared home, port 0).
  * The session is created through `/api/v1` on instance A, so A owns the write
  * lease registered with its own address; klient drives `/api/v2` starting
  * from B. `SessionFacade.restore()` routes to

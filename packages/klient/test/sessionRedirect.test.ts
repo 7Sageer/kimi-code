@@ -8,12 +8,16 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { sessionOwnershipDetailsSchema } from '@moonshot-ai/protocol';
+
 import { RPCError } from '../src/core/errors.js';
 import type { WsLike, WsLikeCtor } from '../src/transports/ws/wsSocket.js';
 import {
   KlientConnection,
   readSessionOwnershipDetails,
+  SESSION_HELD_BY_PEER,
   SessionRedirectChannel,
+  type SessionOwnershipDetails,
   type SessionRedirectInfo,
   type SessionRedirectOptions,
 } from '../src/sessionRedirect.js';
@@ -104,6 +108,26 @@ describe('session ownership redirect (SESSION_HELD_BY_PEER)', () => {
       `${PEER}/api/v2/session/b/sessionMetadata/read`,
       `${HOLDER}/api/v2/session/b/sessionMetadata/read`,
       `http://127.0.0.1:60003/api/v2/session/a/sessionMetadata/read`,
+    ]);
+  });
+
+  it('keeps an unrelated session on the initial origin after another session redirects', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        heldByPeer({ kind: 'held-by-peer', phase: 'routable', address: HOLDER }),
+      )
+      .mockResolvedValueOnce(okEnvelope({ id: 'a' }))
+      .mockResolvedValueOnce(okEnvelope({ id: 'b' }));
+    const { channel } = rig(fetchMock);
+
+    await expect(readSession(channel, 'a')).resolves.toEqual({ id: 'a' });
+    await expect(readSession(channel, 'b')).resolves.toEqual({ id: 'b' });
+
+    expect(urls(fetchMock)).toEqual([
+      `${PEER}/api/v2/session/a/sessionMetadata/read`,
+      `${HOLDER}/api/v2/session/a/sessionMetadata/read`,
+      `${PEER}/api/v2/session/b/sessionMetadata/read`,
     ]);
   });
 
@@ -419,6 +443,80 @@ describe('readSessionOwnershipDetails', () => {
       address: undefined,
       retry_after_ms: undefined,
     });
+  });
+});
+
+describe('sessionOwnershipDetailsSchema parity (protocol schema ↔ klient narrowing)', () => {
+  // The 40921 `details` payload has three twins: the zod schema in
+  // `@moonshot-ai/protocol` (authoritative), klient's structural narrowing,
+  // and kimi-web's. These fixtures pin the first two together: for every
+  // phase kind the schema and `readSessionOwnershipDetails` must agree on
+  // accept/reject, and on accept the field values must match. (One intentional
+  // divergence is NOT covered here: klient drops invalid OPTIONAL fields
+  // instead of rejecting — see "garbage fields are dropped" above.)
+  const cases: Array<{
+    name: string;
+    details: unknown;
+    expected?: SessionOwnershipDetails;
+  }> = [
+    {
+      name: 'routable with address',
+      details: { kind: 'held-by-peer', phase: 'routable', address: HOLDER },
+      expected: { kind: 'held-by-peer', phase: 'routable', address: HOLDER },
+    },
+    {
+      name: 'routable without address',
+      details: { kind: 'held-by-peer', phase: 'routable' },
+      expected: { kind: 'held-by-peer', phase: 'routable' },
+    },
+    {
+      name: 'creating with retry_after_ms',
+      details: { kind: 'held-by-peer', phase: 'creating', retry_after_ms: 120 },
+      expected: { kind: 'held-by-peer', phase: 'creating', retry_after_ms: 120 },
+    },
+    {
+      name: 'creating bare',
+      details: { kind: 'held-by-peer', phase: 'creating' },
+      expected: { kind: 'held-by-peer', phase: 'creating' },
+    },
+    {
+      name: 'holder-unresponsive with retry_after_ms',
+      details: { kind: 'held-by-peer', phase: 'holder-unresponsive', retry_after_ms: 2000 },
+      expected: { kind: 'held-by-peer', phase: 'holder-unresponsive', retry_after_ms: 2000 },
+    },
+    {
+      name: 'held-by-local-instance',
+      details: { kind: 'held-by-peer', phase: 'held-by-local-instance' },
+      expected: { kind: 'held-by-peer', phase: 'held-by-local-instance' },
+    },
+    {
+      name: 'unregistered-writer',
+      details: { kind: 'unregistered-writer' },
+      expected: { kind: 'unregistered-writer' },
+    },
+    // Structurally invalid → both sides reject.
+    { name: 'unknown phase', details: { kind: 'held-by-peer', phase: 'future-phase' } },
+    { name: 'missing phase', details: { kind: 'held-by-peer' } },
+    { name: 'unknown kind', details: { kind: 'mystery' } },
+    { name: 'non-object details', details: 'held-by-peer' },
+    { name: 'null details', details: null },
+  ];
+
+  it.each(cases)('$name', ({ details, expected }) => {
+    const parsed = sessionOwnershipDetailsSchema.safeParse(details);
+    const read = readSessionOwnershipDetails(
+      new RPCError(SESSION_HELD_BY_PEER, 'x', details),
+    );
+    if (expected === undefined) {
+      expect(parsed.success).toBe(false);
+      expect(read).toBeUndefined();
+    } else {
+      expect(parsed.success).toBe(true);
+      expect(read).toEqual(expected);
+      // Field-value equivalence between the schema output and the narrowing
+      // (toEqual ignores the explicit `undefined` optionals klient fills in).
+      if (parsed.success) expect(parsed.data).toEqual(read);
+    }
   });
 });
 

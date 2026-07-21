@@ -119,12 +119,6 @@ export function normalizeInstanceOrigin(address: string): string {
   return address.replace(/\/+$/, '');
 }
 
-/** Split an absolute base URL into origin + path (no trailing slash on either). */
-export function splitOrigin(url: string): { origin: string; path: string } {
-  const parsed = new URL(url);
-  return { origin: parsed.origin, path: parsed.pathname.replace(/\/$/, '') };
-}
-
 /** One followed redirect, emitted via `KlientConnection.onRedirect`. */
 export interface SessionRedirectInfo {
   /** Origin the request was sent to, e.g. `http://127.0.0.1:58627`. */
@@ -165,6 +159,7 @@ const defaultSleep = (ms: number): Promise<void> =>
  * overwrite another session's route.
  */
 export class KlientConnection {
+  private readonly initialUrl: string;
   private url: string;
   private readonly sessionUrls = new Map<string, string>();
   readonly follow: boolean;
@@ -175,7 +170,8 @@ export class KlientConnection {
   private readonly redirectListeners = new Set<(info: SessionRedirectInfo) => void>();
 
   constructor(opts: { url: string } & SessionRedirectOptions) {
-    this.url = opts.url.replace(/\/$/, '');
+    this.initialUrl = opts.url.replace(/\/$/, '');
+    this.url = this.initialUrl;
     this.follow = opts.follow ?? true;
     this.maxRedirects = opts.maxRedirects ?? 1;
     this.maxCreatingRetries = opts.maxCreatingRetries ?? 3;
@@ -188,7 +184,9 @@ export class KlientConnection {
   }
 
   currentUrlFor(sessionId: string | undefined): string {
-    return sessionId === undefined ? this.url : (this.sessionUrls.get(sessionId) ?? this.url);
+    return sessionId === undefined
+      ? this.url
+      : (this.sessionUrls.get(sessionId) ?? this.initialUrl);
   }
 
   onRedirect(listener: (info: SessionRedirectInfo) => void): IDisposable {

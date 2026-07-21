@@ -123,7 +123,6 @@ const DOMAIN_LAYER = new Map([
   ['sessionSkillCatalog', 3],
   ['permissionGate', 3],
   ['flag', 3],
-  ['multiServer', 3],
   ['toolExecutor', 3],
   ['toolResultTruncation', 3],
   ['toolRegistry', 3],
@@ -152,8 +151,8 @@ const DOMAIN_LAYER = new Map([
   ['runtime', 4],
   ['toolDedupe', 4],
   // `fileFencing` is the Agent-scope optimistic-concurrency gate: a
-  // tool-executor hook participant (L3) over the `sessionFileLedger` (L2)
-  // and flag state (L3), so it sits at L4 beside `toolDedupe`.
+  // tool-executor hook participant (L3) over the `sessionFileLedger` (L2),
+  // so it sits at L4 beside `toolDedupe`.
   ['fileFencing', 4],
   ['toolSelect', 4],
   ['contextMemory', 4],

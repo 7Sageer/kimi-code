@@ -247,7 +247,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       const filter = agentFilter?.[sid];
       const ok = await this.broadcaster.subscribe(sid, this, filter);
       if (!ok) {
-        const ownership = await this.broadcaster.getSubscriptionFailure?.(sid);
+        const ownership = await this.broadcaster.getSubscriptionFailure(sid);
         if (ownership !== undefined) ownershipDetails[sid] = ownership;
         else notFound.push(sid);
         continue;
@@ -335,7 +335,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   ): Promise<void> {
     const ok = await this.broadcaster.subscribe(sid, this, filter);
     if (!ok) {
-      const ownership = await this.broadcaster.getSubscriptionFailure?.(sid);
+      const ownership = await this.broadcaster.getSubscriptionFailure(sid);
       if (ownership !== undefined) ownershipDetails[sid] = ownership;
       else notFound.push(sid);
       return;

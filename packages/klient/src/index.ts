@@ -135,7 +135,6 @@ export {
   readSessionOwnershipDetails,
   SESSION_HELD_BY_PEER,
   SessionRedirectChannel,
-  splitOrigin,
   type HeldByPeerDetails,
   type SessionOwnershipDetails,
   type SessionOwnershipPhase,
