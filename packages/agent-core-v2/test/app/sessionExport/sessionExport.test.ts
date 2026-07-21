@@ -964,6 +964,7 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
     get: (agentId) => agents.find((agent) => agent.id === agentId),
     list: () => agents,
     remove: async () => {},
+    broadcastPermissionMode: () => {},
   };
 }
 function testManifest(sessionId: string): ExportSessionManifest {

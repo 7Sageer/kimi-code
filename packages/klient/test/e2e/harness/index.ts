@@ -68,11 +68,6 @@ export type { ReverseRpcOptions } from './reverse-rpc.js';
 
 export { DEFAULT_FRAME_TIMEOUT_MS, waitForFrame, waitForSessionBusy } from './wait.js';
 
-// ── server-v2 SDK (additive) ──────────────────────────────────────────────
-// A lark-style typed client for the `/api/v2` RPC + WS surface. Re-exported
-// here so consumers can `import { ServerClient } from '@moonshot-ai/server-e2e'`
-// alongside the legacy `DaemonClient`. Names are disjoint from the v1 surface.
-
 // ── Dual-instance test helpers (additive) ─────────────────────────────────
 // Boot helpers for multi-server e2e cases: `startServerPair` (in-process) and
 // `spawnServerProcess` / `spawnServerProcessPair` (subprocess, for

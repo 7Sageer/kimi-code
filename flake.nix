@@ -77,6 +77,7 @@
         ./packages/pi-tui
         ./packages/protocol
         ./packages/telemetry
+        ./packages/transcript
         ./apps/kimi-code
         ./apps/vscode
         ./apps/kimi-inspect
@@ -103,6 +104,7 @@
         "@moonshot-ai/pi-tui"
         "@moonshot-ai/protocol"
         "@moonshot-ai/kimi-telemetry"
+        "@moonshot-ai/transcript"
         "@moonshot-ai/kimi-code"
         "kimi-code"
         "@moonshot-ai/kimi-inspect"

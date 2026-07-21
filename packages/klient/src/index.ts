@@ -1,7 +1,7 @@
 /**
  * `@moonshot-ai/klient` public surface — the transport-agnostic client facade
  * over the agent-core-v2 engine. Create a klient with one of the transport
- * entry points (`@moonshot-ai/klient/http`, `/ipc`, or `/memory`); everything
+ * entry points (`@moonshot-ai/klient/ipc` or `/memory`); everything
  * exported here behaves identically regardless of which one carried the
  * bytes.
  */
@@ -126,20 +126,3 @@ export type {
 } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 export type { ContentPart } from '@moonshot-ai/agent-core-v2/app/llmProtocol/message';
 export type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-
-// Multi-instance session ownership (shared home): the http transport follows
-// 40921 `session.held_by_peer` redirects onto the holder instance.
-export {
-  KlientConnection,
-  normalizeInstanceOrigin,
-  readSessionOwnershipDetails,
-  SESSION_HELD_BY_PEER,
-  SessionRedirectChannel,
-  type HeldByPeerDetails,
-  type SessionOwnershipDetails,
-  type SessionOwnershipPhase,
-  type SessionRedirectChannelOptions,
-  type SessionRedirectInfo,
-  type SessionRedirectOptions,
-  type UnregisteredWriterDetails,
-} from './sessionRedirect.js';

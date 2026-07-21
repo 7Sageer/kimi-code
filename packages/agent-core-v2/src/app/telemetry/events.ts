@@ -47,6 +47,7 @@ export interface TurnStartedEvent {
   mode: 'agent' | 'plan';
   provider_type?: string;
   protocol?: string;
+  thinking_effort?: string;
 }
 
 export interface TurnInterruptedEvent {
@@ -56,6 +57,7 @@ export interface TurnInterruptedEvent {
   interrupt_reason: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
   provider_type?: string;
   protocol?: string;
+  thinking_effort?: string;
   trace_id?: string;
 }
 
@@ -66,6 +68,7 @@ export interface TurnEndedEvent {
   mode: 'agent' | 'plan';
   provider_type?: string;
   protocol?: string;
+  thinking_effort?: string;
   trace_id?: string;
 }
 
@@ -206,6 +209,7 @@ export interface ContextProjectionRepairedEvent {
   leading_dropped: number;
   assistants_merged: number;
   whitespace_dropped: number;
+  vacuous_dropped: number;
 }
 
 export interface BackgroundTaskCreatedEvent {
@@ -433,6 +437,7 @@ export const telemetryEventDefinitions = {
       mode: 'Agent mode the turn runs in',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
+      thinking_effort: 'Effective thinking effort the turn runs with',
     },
   }),
   turn_interrupted: defineTelemetryEvent<TurnInterruptedEvent>({
@@ -445,6 +450,7 @@ export const telemetryEventDefinitions = {
       interrupt_reason: 'Why the turn was interrupted',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
+      thinking_effort: 'Effective thinking effort the turn ran with',
       trace_id:
         'Trace id of the most recent LLM request in this turn (the failed request when the turn errored); absent for non-Kimi protocols',
     },
@@ -459,6 +465,7 @@ export const telemetryEventDefinitions = {
       mode: 'Agent mode the turn ran in',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
+      thinking_effort: 'Effective thinking effort the turn ran with',
       trace_id:
         'Trace id of the most recent LLM request in this turn; absent for non-Kimi protocols',
     },
@@ -632,6 +639,7 @@ export const telemetryEventDefinitions = {
       leading_dropped: 'Leading non-user messages dropped',
       assistants_merged: 'Consecutive assistant messages merged',
       whitespace_dropped: 'Whitespace-only text blocks dropped',
+      vacuous_dropped: 'Messages dropped because every recorded part serialized to nothing',
     },
   }),
   background_task_created: defineTelemetryEvent<BackgroundTaskCreatedEvent>({
