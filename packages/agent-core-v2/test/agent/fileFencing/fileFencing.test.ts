@@ -25,7 +25,7 @@ import type {
   ToolDidExecuteContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { IFlagService } from '#/app/flag/flag';
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';

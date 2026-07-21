@@ -13,7 +13,7 @@ import {
   IConfigService,
   IEventService,
   IHostFsWatchService,
-  IModelCatalogService,
+  IProviderDiscoveryService,
   ISessionLifecycleService,
   IWorkspaceRegistry,
   logSeed,
@@ -238,7 +238,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
   }
   const modelCatalogRefreshScheduler = new ModelCatalogRefreshScheduler(
-    core.accessor.get(IModelCatalogService),
+    core.accessor.get(IProviderDiscoveryService),
     core.accessor.get(IConfigService),
     logger,
   );
