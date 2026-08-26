@@ -2,7 +2,9 @@ import type {
   CompactionResult,
   CompactionSource,
 } from './types';
+import type { CompactionRoundStrategy } from './roundStrategy';
 import { createDecorator } from "#/_base/di/instantiation";
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
 import type { Hooks } from '#/hooks';
 
@@ -25,6 +27,10 @@ export interface IAgentFullCompactionService {
   readonly compacting: FullCompactionTask | null;
   begin(input: FullCompactionInput): boolean;
   cancel(): void;
+
+  registerStrategy(id: string, strategy: CompactionRoundStrategy): IDisposable;
+
+  getEffectiveMaxContextTokens(): number;
 
   readonly hooks: Hooks<{
     onWillCompact: FullCompactionTask;

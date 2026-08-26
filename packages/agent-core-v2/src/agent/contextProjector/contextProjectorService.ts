@@ -1,5 +1,6 @@
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -8,6 +9,7 @@ import type { Message } from '#/kosong/contract/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentContextProjectorService,
+  type ContextFold,
   type MediaStripSnapshot,
   type ProjectionPolicy,
 } from './contextProjector';
@@ -33,6 +35,8 @@ export const contextProjectorLastRepairSignatureKey = defineState<string | null>
 export class AgentContextProjectorService implements IAgentContextProjectorService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly folds = new Map<string, ContextFold>();
+
   constructor(
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -49,12 +53,19 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     this.states.set(contextProjectorLastRepairSignatureKey, value);
   }
 
+  registerFold(id: string, fold: ContextFold): IDisposable {
+    this.folds.set(id, fold);
+    return toDisposable(() => {
+      if (this.folds.get(id) === fold) this.folds.delete(id);
+    });
+  }
+
   project(
     messages: readonly ContextMessage[],
     policy: ProjectionPolicy = {},
   ): readonly Message[] {
     const projected = this.projectWithTrace(
-      messages,
+      this.applyFolds(messages, policy),
       policy.structure === 'strict' ? projectStrict : project,
     );
     const media = policy.media;
@@ -64,7 +75,19 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
   }
 
   captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot {
-    return captureMediaStripSnapshot(this.projectWithTrace(messages, project));
+    return captureMediaStripSnapshot(this.projectWithTrace(this.applyFolds(messages), project));
+  }
+
+  private applyFolds(
+    messages: readonly ContextMessage[],
+    policy?: ProjectionPolicy,
+  ): readonly ContextMessage[] {
+    if (policy?.folds === false || this.folds.size === 0) return messages;
+    let folded = messages;
+    for (const fold of this.folds.values()) {
+      folded = fold(folded);
+    }
+    return folded;
   }
 
   private projectWithTrace(

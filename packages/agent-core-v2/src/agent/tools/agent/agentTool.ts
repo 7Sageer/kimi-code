@@ -44,6 +44,7 @@ import { IFlagService } from '#/app/flag/flag';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { SPINE_TOOL_NAMES } from '#/features/spine/spine';
 
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -511,6 +512,8 @@ registerAgentToolService(ISubagentTool, SubagentTool, {
   requiredRuntimeCapabilities: ['process'],
 });
 
+const DESCRIBED_TOOL_DENYLIST: ReadonlySet<string> = new Set(SPINE_TOOL_NAMES);
+
 function buildProfileDescriptions(
   profiles: readonly AgentProfile[],
   tools: readonly ToolReference[],
@@ -526,7 +529,9 @@ function buildProfileDescriptions(
         (part): part is string => part !== undefined && part.length > 0,
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
-      const activeTools = resolveActiveToolNames(profile);
+      const activeTools = resolveActiveToolNames(profile)?.filter(
+        (name) => !DESCRIBED_TOOL_DENYLIST.has(name),
+      );
       const externallyRestricted = tools.some(
         (tool) =>
           evaluateToolActive(profile, tool.name, tool.source) &&
@@ -534,7 +539,11 @@ function buildProfileDescriptions(
       );
       if (externallyRestricted) {
         const effectiveTools = tools
-          .filter((tool) => isToolActive(profile, tool.name, tool.source))
+          .filter(
+            (tool) =>
+              isToolActive(profile, tool.name, tool.source) &&
+              !DESCRIBED_TOOL_DENYLIST.has(tool.name),
+          )
           .map((tool) => tool.name);
         if (effectiveTools.length === 0) {
           return `${header}\n  Tools: none`;

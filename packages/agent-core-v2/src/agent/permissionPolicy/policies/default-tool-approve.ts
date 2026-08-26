@@ -27,6 +27,10 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'GetGoal',
   'SetGoalBudget',
   'UpdateGoal',
+  'spine_open',
+  'spine_close',
+  'spine_next',
+  'spine_tree',
   'select_tools',
 ]);
 

@@ -17,6 +17,13 @@ describe('builtin agent profiles', () => {
     expect(agent.tools).toContain('TowerTeardown');
   });
 
+  it('whitelists the spine control tools in the default profile', () => {
+    const agent = profile('agent');
+    expect(agent.tools).toEqual(
+      expect.arrayContaining(['spine_open', 'spine_close', 'spine_next', 'spine_tree']),
+    );
+  });
+
   it('caps the default profile delegation at non-spawning profiles', () => {
     const agent = profile('agent');
     expect(agent.subagents).toEqual(['coder', 'explore', 'plan']);

@@ -1,4 +1,5 @@
 import type { IDisposable } from '#/_base/di/lifecycle';
+import { toDisposable } from '#/_base/di/lifecycle';
 import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -53,6 +54,7 @@ import {
   RuntimeCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
+import type { CompactionRoundStrategy } from './roundStrategy';
 import {
   CompactionBlocked,
   CompactionCancelled,
@@ -137,6 +139,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   private readonly strategy: CompactionStrategy;
   private readonly todo: TodoRuntime;
   private _compacting: ActiveCompaction | null = null;
+  private activeRoundStrategy: { readonly id: string; readonly strategy: CompactionRoundStrategy } | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -240,6 +243,14 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     return this._compacting;
   }
 
+  registerStrategy(id: string, strategy: CompactionRoundStrategy): IDisposable {
+    const registration = { id, strategy };
+    this.activeRoundStrategy = registration;
+    return toDisposable(() => {
+      if (this.activeRoundStrategy === registration) this.activeRoundStrategy = undefined;
+    });
+  }
+
   cancel(): void {
     const active = this._compacting;
     if (active !== null) {
@@ -251,7 +262,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     active?.abortController.abort();
   }
 
-  private getEffectiveMaxContextTokens(): number {
+  getEffectiveMaxContextTokens(): number {
     const capability = this.profile.data().modelCapabilities;
     const configured = capability.max_input_tokens ?? capability.max_context_tokens;
     const modelAlias = this.profile.data().modelAlias;
@@ -644,7 +655,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let attempt: CompactionAttemptResult | undefined;
-      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
+      const roundStrategy = this.activeRoundStrategy?.strategy;
+      const scopedHistory = roundStrategy?.scopeHistory(originalHistory) ?? originalHistory;
+      let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(scopedHistory);
       let droppedCount = 0;
       let overflowShrinkCount = 0;
       let emptyOrTruncatedShrinkCount = 0;
@@ -737,16 +750,29 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         throw compactionCancelledReason(active);
       }
 
-      const summary = await this.postProcessSummary(attempt.summary);
-      const result = this.context.applyCompaction({
-        summary,
-        contextSummary: buildCompactionSummaryText(summary),
-        compactedCount: originalHistory.length,
-        tokensBefore,
-        summaryOutputTokens: attempt.usage?.output,
-        requestOverheadTokens: this.requestTokens([]),
-        droppedCount: droppedCount === 0 ? undefined : droppedCount,
-      });
+      const summary =
+        roundStrategy !== undefined
+          ? await roundStrategy.postProcessSummary(attempt.summary)
+          : await this.postProcessSummary(attempt.summary);
+      const result =
+        roundStrategy !== undefined
+          ? await roundStrategy.applyResult({
+              summary,
+              originalHistory,
+              tokensBefore,
+              droppedCount: droppedCount === 0 ? undefined : droppedCount,
+              summaryOutputTokens: attempt.usage?.output,
+              requestOverheadTokens: this.requestTokens([]),
+            })
+          : this.context.applyCompaction({
+              summary,
+              contextSummary: buildCompactionSummaryText(summary),
+              compactedCount: originalHistory.length,
+              tokensBefore,
+              summaryOutputTokens: attempt.usage?.output,
+              requestOverheadTokens: this.requestTokens([]),
+              droppedCount: droppedCount === 0 ? undefined : droppedCount,
+            });
 
       const properties: CompactionFinishedEvent = {
         turn_id: active.originTurnId,

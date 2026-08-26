@@ -20,7 +20,7 @@ import {
 import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
 import { makeHookRunner } from '../../features/externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
-import { MASTER_ENV } from '#/app/flag/flagService';
+import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
@@ -2016,7 +2016,7 @@ describe('FullCompaction', () => {
   });
 
   it('does not trigger auto compaction from a deferred loaded MCP schema', async () => {
-    vi.stubEnv(MASTER_ENV, '1');
+    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
     const ctx = testAgent(
       agentService(IAgentToolSelectAnnouncementsService, { _serviceBrand: undefined }),
       {

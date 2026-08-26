@@ -68,6 +68,10 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['GetGoal', {}],
     ['SetGoalBudget', { tokenBudget: 1000 }],
     ['UpdateGoal', { status: 'complete' }],
+    ['spine_open', { summary: 'task A' }],
+    ['spine_close', { memory: 'did A' }],
+    ['spine_next', { summary: 'task B', memory: 'did A' }],
+    ['spine_tree', {}],
   ] as const)('approves %s', (toolName, args) => {
     expect(policy.evaluate(policyContext(toolName, args))).toEqual({ kind: 'approve' });
   });
