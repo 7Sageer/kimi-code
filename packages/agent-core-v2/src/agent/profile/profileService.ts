@@ -181,6 +181,17 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this._register(
       this.dispatcher.hooks.onDidRestore.register('profile', async (_ctx, next) => {
         this.syncTelemetryModelContext(this.modelAlias);
+        if (this.scopeContext.agentId === MAIN_AGENT_ID && this.profileName !== undefined) {
+          await this.catalog.ready;
+          const snapshot = this.data();
+          const subagents = this.bindSubagents(snapshot.profileName, snapshot.subagents);
+          if (
+            subagents?.length !== snapshot.subagents?.length ||
+            subagents?.some((name, index) => name !== snapshot.subagents?.[index])
+          ) {
+            this.applyBindingSnapshot({ ...snapshot, subagents });
+          }
+        }
         await next();
       }),
     );
