@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { type CollectionView } from '#/_base/di/collection';
 import { SyncDescriptor } from '#/_base/di/descriptors';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Event } from '#/_base/event';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
@@ -21,10 +23,12 @@ import type {
 } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
+import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IFlagService } from '#/app/flag/flag';
+import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
-import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import {
   normalizeAgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -119,6 +123,12 @@ class TestRuntimeResolver implements IRuntimeResolver {
     return { runtime: this.runtime, track: (resource) => resource, dispose: () => {} };
   }
 }
+
+class ToolContributions {
+  constructor(@AgentToolContribution readonly view: CollectionView<AgentToolContribution>) {}
+}
+
+const SENT_ONLY_WITH_DYNAMIC_TOOL_LOADING: ReadonlySet<string> = new Set([SELECT_TOOLS_TOOL_NAME]);
 
 const PARENT_SYSTEM_PROMPT = 'You are the parity probe parent.';
 const ACTIVE_TOOL_NAMES = ['Agent', 'Bash', 'Read'];
@@ -237,15 +247,22 @@ describe('fork subagent first-request parity', () => {
     store = new ScopedAppendLogStore();
     ctx = testAgent(
       appService(IAppendLogStore, store),
-      appService(
-        IFlagService,
-        stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID || id === WAIT_FOR_FLAG_ID),
-      ),
+      appService(IFlagService, stubFlag(true)),
+      appService(IWebSearchProviderService, {
+        _serviceBrand: undefined,
+        hasWebSearchProvider: () => true,
+        getWebSearchProvider: () => ({ search: () => Promise.resolve([]) }),
+      }),
       sessionServices((reg) => {
         reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,
+        });
+        reg.defineInstance(ISessionNotify, {
+          _serviceBrand: undefined,
+          ready: Promise.resolve(),
+          enabled: true,
         });
       }),
       agentServices((reg) => {
@@ -260,11 +277,7 @@ describe('fork subagent first-request parity', () => {
   async function runMainAgentFork(options?: { readonly disallowedTools?: readonly string[] }): Promise<void> {
     const profile = ctx.get(IAgentProfileService);
     await profile.bind({ profile: 'agent', model: 'mock-model' });
-    const registeredToolNames = ctx
-      .get(IAgentToolRegistryService)
-      .list()
-      .map((tool) => tool.name);
-    profile.update({ activeToolNames: registeredToolNames });
+    profile.update({ activeToolNames: contributedToolNames() });
     if (options?.disallowedTools !== undefined) {
       profile.update({ disallowedTools: [...options.disallowedTools] });
     }
@@ -292,15 +305,24 @@ describe('fork subagent first-request parity', () => {
     expect(completion.state).toBe('completed');
   }
 
+  function contributedToolNames(): string[] {
+    return ctx
+      .get(IInstantiationService)
+      .createInstance<ToolContributions>(new SyncDescriptor(ToolContributions))
+      .view.items.map((contribution) => contribution.options.name);
+  }
+
   function expectMainForkParity(): void {
     expect(ctx.llmCalls).toHaveLength(3);
     const parentReq = ctx.llmCalls[0]!;
     const childReq = ctx.llmCalls[1]!;
 
     expect(childReq.systemPrompt).toBe(parentReq.systemPrompt);
-    const parentToolNames = parentReq.tools.map((tool) => tool.name);
-    expect(parentToolNames).toContain('Agent');
-    expect(parentToolNames).toContain('WaitFor');
+    expect(parentReq.tools.map((tool) => tool.name).toSorted()).toEqual(
+      contributedToolNames()
+        .filter((name) => !SENT_ONLY_WITH_DYNAMIC_TOOL_LOADING.has(name))
+        .toSorted(),
+    );
     expect(childReq.tools).toEqual(parentReq.tools);
 
     const prefix = childReq.history.slice(0, parentReq.history.length);
