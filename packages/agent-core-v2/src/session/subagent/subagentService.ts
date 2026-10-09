@@ -17,6 +17,8 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -188,8 +190,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         .get(IAgentPermissionModeService)
         .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
       if (
-        created.accessor.get(IAgentProfileService).getActiveToolNames()?.includes('WaitFor') ===
-        true
+        created.accessor.get(IAgentToolRegistryService).list().some((tool) => tool.name === 'WaitFor') &&
+        created.accessor.get(IAgentToolPolicyService).isToolActive('WaitFor')
       ) {
         created.accessor
           .get(IAgentReminderService)

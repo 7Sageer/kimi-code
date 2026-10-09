@@ -257,13 +257,16 @@ describe('fork subagent first-request parity', () => {
     );
   }
 
-  async function runMainAgentFork(): Promise<void> {
+  async function runMainAgentFork(options?: { readonly disallowedTools?: readonly string[] }): Promise<void> {
     const profile = ctx.get(IAgentProfileService);
     const registeredToolNames = ctx
       .get(IAgentToolRegistryService)
       .list()
       .map((tool) => tool.name);
     profile.update({ activeToolNames: registeredToolNames });
+    if (options?.disallowedTools !== undefined) {
+      profile.update({ disallowedTools: [...options.disallowedTools] });
+    }
     ctx.get(IAgentPermissionModeService).setMode('yolo');
 
     ctx.mockNextResponse({
@@ -338,5 +341,22 @@ describe('fork subagent first-request parity', () => {
     const agentTool = parentReq.tools.find((tool) => tool.name === 'Agent');
     expect(agentTool?.description).toContain('code-reviewer');
     expectMainForkParity();
+  });
+
+  it('omits the background-task reminder when WaitFor is vetoed', async () => {
+    createMainForkCtx();
+    await runMainAgentFork({ disallowedTools: ['WaitFor'] });
+
+    expect(ctx.llmCalls).toHaveLength(3);
+    const parentReq = ctx.llmCalls[0]!;
+    const childReq = ctx.llmCalls[1]!;
+    expect(childReq.tools).toEqual(parentReq.tools);
+
+    const tailText = childReq.history
+      .slice(parentReq.history.length)
+      .flatMap((message) => message.content)
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('\n');
+    expect(tailText).not.toContain(SUBAGENT_BACKGROUND_TASK_NOTICE);
   });
 });

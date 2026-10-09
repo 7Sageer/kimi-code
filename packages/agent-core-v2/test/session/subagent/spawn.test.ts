@@ -37,6 +37,8 @@ import {
   type SubagentSpawnPlanInput,
 } from '#/session/subagent/spawn';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
@@ -94,6 +96,10 @@ describe('SessionSubagentService planSpawn and spawn', () => {
           if (serviceId === IAgentPermissionModeService) return createdPermissionMode;
           if (serviceId === IAgentUserToolService) return createdUserTools;
           if (serviceId === IAgentReminderService) return createdReminder;
+          if (serviceId === IAgentToolPolicyService) {
+            return { isToolActive: () => false, isToolActiveForProfile: () => false };
+          }
+          if (serviceId === IAgentToolRegistryService) return { list: () => [] };
           return undefined;
         },
       } as IAgentScopeHandle['accessor'],
