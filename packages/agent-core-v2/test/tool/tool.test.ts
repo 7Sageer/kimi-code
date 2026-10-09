@@ -892,15 +892,9 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('- agent:');
   });
 
-  it('lists discovered custom agents for the main agent alongside the builtin allowlist', () => {
+  it('lists discovered custom agents for the main agent alongside the builtin allowlist', async () => {
     ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, discoveredCatalog()));
-    ctx.get(IAgentProfileService).applyBindingSnapshot({
-      modelAlias: 'mock-model',
-      profileName: 'agent',
-      thinkingLevel: 'off',
-      systemPrompt: 'persisted prompt',
-      subagents: ['coder', 'explore', 'plan'],
-    });
+    await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
 
     const description = agentDescription();
 
@@ -1940,7 +1934,6 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('child result');
     expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
       labels: expect.objectContaining({ parentAgentId: 'main' }),
-      subagents: ['coder', 'explore', 'plan'],
     });
   });
 
@@ -1962,7 +1955,6 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
       labels: expect.objectContaining({ parentAgentId: 'main' }),
-      subagents: ['coder', 'explore', 'plan'],
     });
     expect(lifecycle.run).toHaveBeenCalledOnce();
     const [runAgent, runRequest] = lifecycle.run.mock.calls[0]!;
@@ -1990,7 +1982,6 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.create).not.toHaveBeenCalled();
     expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
       labels: expect.objectContaining({ parentAgentId: 'main' }),
-      subagents: ['coder', 'explore', 'plan'],
     });
   });
 

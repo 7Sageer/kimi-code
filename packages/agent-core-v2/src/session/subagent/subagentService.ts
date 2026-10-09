@@ -10,7 +10,6 @@ import {
 import { Emitter } from '#/_base/event';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
-  rootDelegationExtras,
   subagentAllowlistFor,
   subagentTypeNotAllowedMessage,
   withoutDelegatingTargets,
@@ -29,7 +28,7 @@ import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { createHooks } from '#/hooks';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 
@@ -100,11 +99,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       : undefined;
     const requestedProfileName =
       requested ?? (fork ? (own.profileName ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME);
-    const extras =
-      input.callerAgentId === MAIN_AGENT_ID
-        ? rootDelegationExtras(this.catalog, own, this.catalog.list())
-        : undefined;
-    let allowlist = subagentAllowlistFor(this.catalog, own, extras);
+    let allowlist = subagentAllowlistFor(this.catalog, own);
     if (allowlist !== undefined && own.subagents === undefined) {
       allowlist = withoutDelegatingTargets(this.catalog, allowlist);
     }
@@ -145,7 +140,6 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       modelSource: binding.modelSource,
       thinking: resolveSubagentThinking(this.configService, model, binding.thinking),
       fork,
-      inheritedSubagents: fork && allowlist !== undefined ? allowlist : undefined,
     };
   }
 
@@ -161,7 +155,6 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         if (plan.fork) {
           const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
             labels: opts.labels,
-            subagents: plan.inheritedSubagents,
           });
           created = this.agentLifecycle.handleOf(forked.agentId)!;
           created.accessor

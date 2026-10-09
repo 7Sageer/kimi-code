@@ -259,6 +259,7 @@ describe('fork subagent first-request parity', () => {
 
   async function runMainAgentFork(options?: { readonly disallowedTools?: readonly string[] }): Promise<void> {
     const profile = ctx.get(IAgentProfileService);
+    await profile.bind({ profile: 'agent', model: 'mock-model' });
     const registeredToolNames = ctx
       .get(IAgentToolRegistryService)
       .list()
