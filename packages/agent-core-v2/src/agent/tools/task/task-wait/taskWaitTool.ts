@@ -30,6 +30,8 @@ const PAGING_HINT_LINES = 300;
 
 const PROGRESS_INTERVAL_MS = 1_000;
 
+const WAIT_FOR_TOOL_DESCRIPTION = `${WAIT_FOR_DESCRIPTION.trimEnd()}\n${WAIT_FOR_SUBAGENT_GUIDANCE}`;
+
 type WaitForOutcome = 'completed' | 'timed_out' | 'task_not_found' | 'aborted' | 'interrupted';
 
 interface TurnWaitTally {
@@ -123,7 +125,7 @@ export function startWaitProgress(
 export class WaitForTool implements IWaitForTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'WaitFor' as const;
-  readonly description: string;
+  readonly description: string = WAIT_FOR_TOOL_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WaitForInputSchema);
 
   private readonly isSubagent: boolean;
@@ -137,9 +139,6 @@ export class WaitForTool implements IWaitForTool {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
   ) {
     this.isSubagent = scopeContext.agentId !== MAIN_AGENT_ID;
-    this.description = this.isSubagent
-      ? `${WAIT_FOR_DESCRIPTION.trimEnd()}\n${WAIT_FOR_SUBAGENT_GUIDANCE}`
-      : WAIT_FOR_DESCRIPTION;
   }
 
   resolveExecution(args: WaitForInput): ToolExecution {

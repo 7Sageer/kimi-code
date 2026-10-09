@@ -20,8 +20,15 @@ import type {
   RuntimeLease,
 } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IFlagService } from '#/app/flag/flag';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
+import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
+import {
+  normalizeAgentProfile,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
@@ -33,6 +40,7 @@ import {
 
 import {
   appService,
+  agentServices,
   sessionServices,
   testAgent,
   type TestAgentContext,
@@ -223,5 +231,105 @@ describe('fork subagent first-request parity', () => {
       systemPromptHash: parentWire?.['systemPromptHash'],
       toolsHash: parentWire?.['toolsHash'],
     });
+  });
+
+  function createMainForkCtx(): void {
+    store = new ScopedAppendLogStore();
+    ctx = testAgent(
+      appService(IAppendLogStore, store),
+      appService(
+        IFlagService,
+        stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID || id === WAIT_FOR_FLAG_ID),
+      ),
+      sessionServices((reg) => {
+        reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
+        reg.definePartialInstance(IWorkspaceInstanceManager, {
+          onDidChange: Event.None as Event<WorkspaceInstanceChange>,
+          get: () => undefined,
+        });
+      }),
+      agentServices((reg) => {
+        reg.defineInstance(IAgentRuntimeBindingSeed, {
+          _serviceBrand: undefined,
+          binding: { workspaceId: 'test-workspace', runtimeId: 'local' },
+        });
+      }),
+    );
+  }
+
+  async function runMainAgentFork(): Promise<void> {
+    const profile = ctx.get(IAgentProfileService);
+    const registeredToolNames = ctx
+      .get(IAgentToolRegistryService)
+      .list()
+      .map((tool) => tool.name);
+    profile.update({ activeToolNames: registeredToolNames });
+    ctx.get(IAgentPermissionModeService).setMode('yolo');
+
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_fork',
+      name: 'Agent',
+      arguments: JSON.stringify({
+        description: 'main fork parity child',
+        prompt: 'finish the inherited task',
+        fork: true,
+      }),
+    });
+    ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
+    ctx.mockNextResponse({ type: 'text', text: 'parent final answer' });
+
+    const loop = ctx.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'start the main fork probe' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    const completion = await loop.promptHandle(id)!.completion;
+    expect(completion.state).toBe('completed');
+  }
+
+  function expectMainForkParity(): void {
+    expect(ctx.llmCalls).toHaveLength(3);
+    const parentReq = ctx.llmCalls[0]!;
+    const childReq = ctx.llmCalls[1]!;
+
+    expect(childReq.systemPrompt).toBe(parentReq.systemPrompt);
+    const parentToolNames = parentReq.tools.map((tool) => tool.name);
+    expect(parentToolNames).toContain('Agent');
+    expect(parentToolNames).toContain('WaitFor');
+    expect(childReq.tools).toEqual(parentReq.tools);
+
+    const prefix = childReq.history.slice(0, parentReq.history.length);
+    expect(prefix).toEqual(parentReq.history);
+  }
+
+  it('keeps first-request parity when the main agent forks', async () => {
+    createMainForkCtx();
+    await runMainAgentFork();
+    expectMainForkParity();
+  });
+
+  it('keeps first-request parity when discovered profiles exist', async () => {
+    createMainForkCtx();
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId: 'workspace',
+      priority: 30,
+      contribution: {
+        profiles: [
+          normalizeAgentProfile({
+            name: 'code-reviewer',
+            description: 'Reviews code changes for regressions.',
+            tools: ['Read', 'Grep', 'Glob'],
+            systemPrompt: () => 'You are a code reviewer.',
+          }),
+        ],
+      },
+    });
+    await runMainAgentFork();
+
+    const parentReq = ctx.llmCalls[0]!;
+    const agentTool = parentReq.tools.find((tool) => tool.name === 'Agent');
+    expect(agentTool?.description).toContain('code-reviewer');
+    expectMainForkParity();
   });
 });

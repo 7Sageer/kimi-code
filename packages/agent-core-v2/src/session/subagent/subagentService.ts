@@ -142,6 +142,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       modelSource: binding.modelSource,
       thinking: resolveSubagentThinking(this.configService, model, binding.thinking),
       fork,
+      inheritedSubagents: fork && allowlist !== undefined ? allowlist : undefined,
     };
   }
 
@@ -157,6 +158,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         if (plan.fork) {
           const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
             labels: opts.labels,
+            subagents: plan.inheritedSubagents,
           });
           created = this.agentLifecycle.handleOf(forked.agentId)!;
           created.accessor
