@@ -29,7 +29,7 @@ import {
   normalizeAgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
-import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
+import { FORK_CONTEXT_NOTICE, SUBAGENT_BACKGROUND_TASK_NOTICE } from '#/session/subagent/spawn';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import {
@@ -301,6 +301,13 @@ describe('fork subagent first-request parity', () => {
 
     const prefix = childReq.history.slice(0, parentReq.history.length);
     expect(prefix).toEqual(parentReq.history);
+
+    const tailText = childReq.history
+      .slice(parentReq.history.length)
+      .flatMap((message) => message.content)
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('\n');
+    expect(tailText).toContain(SUBAGENT_BACKGROUND_TASK_NOTICE);
   }
 
   it('keeps first-request parity when the main agent forks', async () => {
