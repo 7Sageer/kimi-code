@@ -169,6 +169,28 @@ describe('AgentProfileService.bind', () => {
     expect(svc.data().subagents).toEqual(['coder']);
   });
 
+  it('preserves an explicit wildcard subagents on a profile bound as main', async () => {
+    const { profile: svc } = buildContext();
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId: 'workspace',
+      priority: 30,
+      contribution: {
+        profiles: [
+          normalizeAgentProfile({
+            name: 'wild-main',
+            description: 'Wildcard main agent',
+            subagents: ['*'],
+            systemPrompt: () => 'wild main',
+          }),
+        ],
+      },
+    });
+
+    await svc.bind({ profile: 'wild-main', model: MOCK_MODEL });
+
+    expect(svc.data().subagents).toEqual(['*']);
+  });
+
   it('waits for the identity freeze instead of racing it', async () => {
     const deferred = deferredAgentIdentityStub();
     ctx = createTestAgent(

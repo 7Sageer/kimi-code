@@ -284,7 +284,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const caller = { profileName, subagents };
     const extras = rootDelegationExtras(this.catalog, caller, this.catalog.list());
     const allowlist = subagentAllowlistFor(this.catalog, caller, extras);
-    if (allowlist === undefined || subagents !== undefined) return allowlist;
+    if (allowlist === undefined) return subagents;
+    if (subagents !== undefined) return allowlist;
     return withoutDelegatingTargets(this.catalog, allowlist);
   }
 
