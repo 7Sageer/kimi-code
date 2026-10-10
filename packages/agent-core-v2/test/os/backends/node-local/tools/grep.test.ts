@@ -835,6 +835,25 @@ describe('GrepTool', () => {
     expect(toolContentString(result)).toBe('src/main.ts');
   });
 
+  it.each(['content', 'files_with_matches', 'count_matches'] as const)(
+    'includes sensitive results in %s after explicit opt-in', async (output_mode) => {
+      const payload = output_mode === 'content' ? '1:TOKEN=example' : output_mode === 'count_matches' ? '1' : '';
+      const exec = vi.fn().mockResolvedValue(processWithOutput(nullRecord('/workspace/.env', payload)));
+      const tool = new GrepTool(createFakeKaos({ exec }), workspace);
+      const args = { pattern: 'example', include_sensitive: true, include_ignored: true, output_mode };
+      const execution = tool.resolveExecution(args);
+      expect(execution).toMatchObject({
+        display: { detail: 'Includes sensitive file contents; may expose secrets to the model.' },
+      });
+      expect(exec).not.toHaveBeenCalled();
+      const result = await executeTool(tool, context(args));
+      expect(toolContentString(result)).toContain('.env');
+      expect(toolContentString(result)).not.toContain('Filtered');
+      expect(exec.mock.calls[0]).not.toContain('!**/.env');
+      expect(exec.mock.calls[0]).toContain('--no-ignore');
+    },
+  );
+
   it('does not prefilter public key files that the sensitive policy allows', async () => {
     const stdout = [
       '/workspace/id_rsa.pub:1:ssh-rsa hit',

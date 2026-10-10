@@ -641,6 +641,8 @@ export class KimiTUI {
       // not implicitly trusted, and later startup steps spawn child processes.
       startupTrace('trustPrompt:begin');
       const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
+      if (this.aborted) return;
+      this.state.footer.trustWorkspace(this.state.appState.workDir);
       startupTrace('trustPrompt:end');
 
       if (this.migrationPlan !== null) {
@@ -790,13 +792,13 @@ export class KimiTUI {
     if (this.fdDownloadStarted) return;
     this.fdDownloadStarted = true;
 
-    this.fdPath = detectFdPath();
+    this.fdPath = detectFdPath(this.state.appState.workDir);
     if (this.fdPath !== null) {
       this.setupAutocomplete();
       return;
     }
 
-    void ensureFdPath()
+    void ensureFdPath(this.state.appState.workDir)
       .then((fdPath) => {
         if (fdPath === null) return;
         this.fdPath = fdPath;
@@ -3419,7 +3421,7 @@ export class KimiTUI {
   }
 
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
-    openUrl(auth.verificationUriComplete);
+    openUrl(auth.verificationUriComplete, undefined, this.state.appState.workDir);
     this.state.transcriptContainer.addChild(
       new DeviceCodeBoxComponent({
         title: 'Sign in to Kimi Code',
