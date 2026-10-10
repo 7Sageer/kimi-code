@@ -16,8 +16,6 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
@@ -49,7 +47,6 @@ import {
 import {
   DEFAULT_PROFILE_NAME,
   FORK_CONTEXT_NOTICE,
-  SUBAGENT_BACKGROUND_TASK_NOTICE,
   type SpawnSubagentOptions,
   type SpawnedSubagent,
   type SubagentSpawnPlan,
@@ -182,14 +179,6 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       created.accessor
         .get(IAgentPermissionModeService)
         .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
-      if (
-        created.accessor.get(IAgentToolRegistryService).list().some((tool) => tool.name === 'WaitFor') &&
-        created.accessor.get(IAgentToolPolicyService).isToolActive('WaitFor')
-      ) {
-        created.accessor
-          .get(IAgentReminderService)
-          .notify(SUBAGENT_BACKGROUND_TASK_NOTICE, { variant: 'subagent_background_task' });
-      }
       const createdUserTools = created.accessor.get(IAgentUserToolService);
       const callerUserTools = caller.accessor.get(IAgentUserToolService);
       if (plan.fork) {

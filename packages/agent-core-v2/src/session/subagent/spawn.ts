@@ -13,9 +13,6 @@ export const FORK_EXPERIMENTAL_UNAVAILABLE =
 export const FORK_CONTEXT_NOTICE =
   'The conversation above is not your own history: it is a one-time snapshot inherited from the agent that forked you. Treat it as reference material only — you are an independent subagent, not a continuation of that agent. Do the task below directly yourself, then report the result.';
 
-export const SUBAGENT_BACKGROUND_TASK_NOTICE =
-  'You are running as a subagent: ending your turn is your final hand-off to the parent agent, and completion notifications that arrive after it reach no one. Do not end your turn while a background task whose result you need is still running. Keep waiting for it with WaitFor, calling it again after a timeout if needed, or run the command in the foreground with a suitable timeout instead. Still use the waiting time for other useful work on your task when you can.';
-
 export interface ForkCompatibilityArgs {
   readonly resume?: string;
   readonly subagent_type?: string;

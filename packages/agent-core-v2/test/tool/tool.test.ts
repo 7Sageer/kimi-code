@@ -24,7 +24,6 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { createActor } from '#human/xstate2';
@@ -307,14 +306,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
           return {
             _serviceBrand: undefined,
             register: () => ({ dispose: () => {} }),
-            list: () => [],
-          } as never;
-        }
-        if (serviceId === IAgentToolPolicyService) {
-          return {
-            _serviceBrand: undefined,
-            isToolActive: () => false,
-            isToolActiveForProfile: () => false,
           } as never;
         }
         if (serviceId === IAgentUserToolService) {

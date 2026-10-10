@@ -3,6 +3,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentSubagentTaskReminderService } from '#/agent/task/subagentTaskReminderService';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 
@@ -27,6 +28,7 @@ export class SessionBtwService implements ISessionBtwService {
     }
     const childContext = await this.agentLifecycle.fork(main.accessor.get(IAgentScopeContext).agentContext);
     const child = this.agentLifecycle.handleOf(childContext.agentId)!;
+    child.accessor.get(IAgentSubagentTaskReminderService).disable();
     child.accessor
       .get(IAgentReminderService)
       .notify(SIDE_QUESTION_SYSTEM_REMINDER, { variant: 'btw' });
