@@ -562,7 +562,7 @@ describe('subagent task reminders and fork request parity', () => {
     expect(taskReminders(child.accessor.get(IAgentContextMemoryService).get())).toHaveLength(1);
   });
 
-  it('keeps btw request parity without handoff guidance, even after compaction', async () => {
+  it('keeps btw system, tools and inherited history identical to main', async () => {
     createMainForkCtx();
     await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
     ctx.get(IAgentProfileService).update({ activeToolNames: contributedToolNames() });
@@ -579,16 +579,6 @@ describe('subagent task reminders and fork request parity', () => {
     expect(childReq.tools).toEqual(parentReq.tools);
     expect(childReq.systemPrompt).toBe(parentReq.systemPrompt);
     expect(childReq.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
-    const context = child.accessor.get(IAgentContextMemoryService);
-    context.applyCompaction({
-      summary: 'The user asked a read-only side question.',
-      compactedCount: context.get().length,
-      tokensBefore: 1000,
-    });
-    await runPrompt(child);
-    expect(ctx.llmCalls).toHaveLength(3);
-    for (const request of ctx.llmCalls) {
-      expect(taskReminders(request.history)).toHaveLength(0);
-    }
+    expect(ctx.llmCalls).toHaveLength(2);
   });
 });

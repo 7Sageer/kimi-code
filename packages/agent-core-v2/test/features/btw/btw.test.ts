@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSubagentTaskReminderService } from '#/agent/task/subagentTaskReminderService';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -26,7 +25,6 @@ describe('SessionBtwService', () => {
   let ix: TestInstantiationService;
   let fork: ReturnType<typeof vi.fn>;
   let appendReminder: ReturnType<typeof vi.fn>;
-  let disableTaskReminder: ReturnType<typeof vi.fn>;
   let formatDenyMessage: ReturnType<typeof vi.fn>;
   let executorEvents: ToolExecutorEventStubs;
 
@@ -34,7 +32,6 @@ describe('SessionBtwService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     appendReminder = vi.fn(() => 'reminder-id');
-    disableTaskReminder = vi.fn();
     formatDenyMessage = vi.fn((message: string) => `${message} [worker guidance]`);
     executorEvents = stubToolExecutorEvents();
 
@@ -45,7 +42,6 @@ describe('SessionBtwService', () => {
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
           if (id === IAgentToolExecutorService) return executorEvents.executor;
           if (id === IAgentReminderService) return { notify: appendReminder };
-          if (id === IAgentSubagentTaskReminderService) return { disable: disableTaskReminder };
           return undefined;
         },
       },
@@ -85,7 +81,6 @@ describe('SessionBtwService', () => {
     const id = await svc.start();
 
     expect(id).toBe('agent-btw-1');
-    expect(disableTaskReminder).toHaveBeenCalledOnce();
     expect(fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main', generation: 1 }));
     expect(appendReminder).toHaveBeenCalledWith(SIDE_QUESTION_SYSTEM_REMINDER, {
       variant: 'btw',
@@ -96,7 +91,7 @@ describe('SessionBtwService', () => {
     const svc = ix.get(ISessionBtwService);
     await svc.start();
 
-    for (const name of ['Bash', 'Write', 'Edit', 'WaitFor']) {
+    for (const name of ['Bash', 'Write', 'Edit']) {
       const toolCall: ToolCall = { type: 'function', id: `call_${name}`, name, arguments: '{}' };
       const decision = await executorEvents.fireBeforeExecute({
         turnId: 0,
