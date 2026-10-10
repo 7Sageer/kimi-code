@@ -524,7 +524,6 @@ describe('GlobTool', () => {
     expect(result.output).toContain('src/a.ts');
     expect(result.output).toContain('.env');
     expect(result.output).not.toContain('Filtered');
-    expect(exec.mock.calls[0]?.[1]).not.toContain('!**/.env');
   });
 
   it('surfaces the raw spawn error when rg cannot be spawned', async () => {

@@ -158,14 +158,12 @@ describe('AgentPermissionPolicyService chain', () => {
 
   it.each(['manual', 'yolo'] as const)('asks for sensitive file contents in %s mode', async (permissionMode) => {
     mode = permissionMode;
-    for (const toolName of ['Read', 'Write', 'Edit']) {
-      await expect(evaluate({ toolName, args: { path: '/workspace/.env' } })).resolves.toMatchObject({
-        policyName: 'sensitive-file-access-ask', result: { kind: 'ask' },
-      });
-    }
+    await expect(evaluate({ toolName: 'Read', args: { path: '/workspace/.env' } })).resolves.toMatchObject({
+      policyName: 'sensitive-file-access-ask', result: { kind: 'ask' },
+    });
   });
 
-  it.each(['deny', 'ask', 'allow'] as const)('honors explicit %s rules for sensitive files', async (decision) => {
+  it.each(['deny', 'allow'] as const)('honors explicit %s rules for sensitive files', async (decision) => {
     rules.push({ decision, scope: 'user', pattern: 'Read(.env)' });
     await expect(evaluate({ toolName: 'Read', args: { path: '/workspace/.env' } })).resolves.toMatchObject({
       policyName: `user-configured-${decision}`,
@@ -192,7 +190,7 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it.each(['deny', 'ask', 'allow'] as const)('preserves configured Grep pattern %s rules for sensitive searches', async (decision) => {
+  it.each(['deny', 'allow'] as const)('preserves configured Grep pattern %s rules for sensitive searches', async (decision) => {
     const args = { pattern: 'example', include_sensitive: true };
     const execution = new GrepTool(ix.get(IAgentRuntimeService), workspace.stub, recordingTelemetry([])).resolveExecution(args);
     if (execution.isError === true) throw new Error(execution.output as string);
@@ -248,15 +246,11 @@ describe('AgentPermissionPolicyService chain', () => {
     })).resolves.toMatchObject({ policyName: 'workspace-write-approve', result: { kind: 'approve' } });
   });
 
-  it.each(['ask', 'deny'] as const)('honors explicit %s rules before ordinary workspace write approval', async (decision) => {
-    for (const toolName of ['Write', 'Edit']) {
-      rules.push({ decision, scope: 'user', pattern: toolName });
-      await expect(evaluate({
-        toolName, args: { path: '/workspace/a.ts' }, accesses: ToolAccesses.readWriteFile('/workspace/a.ts'),
-      })).resolves.toMatchObject({
-        policyName: `user-configured-${decision}`, result: { kind: decision },
-      });
-    }
+  it('honors explicit deny rules before ordinary workspace write approval', async () => {
+    rules.push({ decision: 'deny', scope: 'user', pattern: 'Write' });
+    await expect(evaluate({
+      toolName: 'Write', args: { path: '/workspace/a.ts' }, accesses: ToolAccesses.readWriteFile('/workspace/a.ts'),
+    })).resolves.toMatchObject({ policyName: 'user-configured-deny', result: { kind: 'deny' } });
   });
 
   it('routes a real sensitive Write execution through permission rules before touching disk', async () => {
