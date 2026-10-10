@@ -44,7 +44,7 @@ import {
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
-import { SUBAGENT_BACKGROUND_TASK_NOTICE } from '#/agent/task/subagentTaskReminderService';
+import { SUBAGENT_BACKGROUND_TASK_NOTICE } from '#/agent/task/taskService';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import {
