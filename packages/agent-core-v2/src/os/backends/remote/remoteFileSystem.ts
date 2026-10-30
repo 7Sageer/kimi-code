@@ -1,3 +1,5 @@
+import * as posixPath from 'node:path/posix';
+
 import {
   decodeTextWithErrors,
   readUtf8Lines,
@@ -7,8 +9,15 @@ import { splitLinesKeepingTerminator } from '#/_base/text/line-endings';
 import type {
   HostDirEntry,
   HostFileStat,
+  HostWalkOptions,
+  HostWalkResult,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
+import {
+  HOST_WALK_DEFAULT_TIMEOUT_MS,
+  HOST_WALK_MAX_IGNORE_BYTES,
+  walkHostDirectory,
+} from '#/os/interface/hostFsWalk';
 import {
   HostFsError,
   OsFsErrors,
@@ -28,16 +37,23 @@ import {
   FS_READ_FILE_METHOD,
   FS_REMOVE_METHOD,
   FS_RENAME_METHOD,
+  FS_WALK_METHOD,
   FS_WRITE_FILE_CHUNK_BYTES,
   FS_WRITE_FILE_METHOD,
   type FsGetMetadataResult,
   type FsReadDirectoryResult,
   type FsReadFileResult,
+  type FsWalkResult,
   type FsWriteMode,
 } from '#/remote/protocol/methods';
 import { rpcDomainError } from './rpcDomainError';
 
 const HOST_FS_CODES: ReadonlySet<string> = new Set(Object.values(OsFsErrors.codes));
+const REMOTE_WALK_PATH = {
+  join: (...paths: readonly string[]) => posixPath.join(...paths),
+  relative: (from: string, to: string) => posixPath.relative(from, to),
+  separator: posixPath.sep,
+};
 
 export function toRemoteFsError(error: unknown): Error {
   if (!(error instanceof RpcError)) {
@@ -62,6 +78,7 @@ function isUtf8Encoding(encoding: BufferEncoding): boolean {
 
 export class RemoteFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
+  private walkSupported: boolean | undefined;
 
   constructor(private readonly connection: ExecChannel) {}
 
@@ -230,6 +247,52 @@ export class RemoteFileSystem implements IHostFileSystem {
       isDirectory: entry.isDirectory,
       isSymbolicLink: entry.isSymlink,
     }));
+  }
+
+  async walk(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
+    const remainingMs = options.deadlineMs === undefined ? undefined : options.deadlineMs - Date.now();
+    if (remainingMs !== undefined && remainingMs <= 0) {
+      return { entries: [], errors: [], truncated: true, responseBytes: 0 };
+    }
+    const timeoutMs = Math.max(1, Math.min(
+      remainingMs ?? HOST_WALK_DEFAULT_TIMEOUT_MS,
+      HOST_WALK_DEFAULT_TIMEOUT_MS,
+    ));
+    if (this.walkSupported === false) return this.walkFallback(path, options);
+    if (options.ignore !== undefined && Buffer.byteLength(JSON.stringify(options.ignore)) > HOST_WALK_MAX_IGNORE_BYTES) {
+      return this.walkFallback(path, options);
+    }
+    try {
+      const result = await this.connection.call(FS_WALK_METHOD, {
+        path,
+        maxDepth: options.maxDepth,
+        maxDirectories: options.maxDirectories,
+        maxEntries: options.maxEntries,
+        maxResponseBytes: options.maxResponseBytes,
+        ignore: options.ignore,
+        timeoutMs,
+      }) as FsWalkResult;
+      this.walkSupported = true;
+      return {
+        entries: result.entries,
+        errors: result.errors.map(({ path: errorPath, error }) => ({
+          path: errorPath,
+          error: toRemoteFsError(RpcError.fromErrorBody(error)),
+        })),
+        truncated: result.truncated,
+        responseBytes: result.responseBytes,
+      };
+    } catch (error) {
+      if (error instanceof RpcError && error.code === RpcErrorCode.MethodNotFound) {
+        this.walkSupported = false;
+        return this.walkFallback(path, options);
+      }
+      throw toRemoteFsError(error);
+    }
+  }
+
+  private async walkFallback(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
+    return walkHostDirectory(this, path, options, { path: REMOTE_WALK_PATH });
   }
 
   async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {

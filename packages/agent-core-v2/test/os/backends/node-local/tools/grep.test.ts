@@ -160,6 +160,7 @@ function createTestFs(kaos: FakeKaos): IHostFileSystem {
     stat: (path) => kaos.stat(path),
     lstat: (path) => kaos.stat(path),
     readdir: () => notImplemented('readdir'),
+    walk: () => notImplemented('walk'),
     mkdir: () => notImplemented('mkdir'),
     remove: () => notImplemented('remove'),
     realpath: () => notImplemented('realpath'),

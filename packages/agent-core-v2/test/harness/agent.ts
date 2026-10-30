@@ -590,6 +590,7 @@ function isFullHostFs(input: unknown): boolean {
     'realpath',
     'stat',
     'readdir',
+    'walk',
     'mkdir',
     'remove',
   ];
