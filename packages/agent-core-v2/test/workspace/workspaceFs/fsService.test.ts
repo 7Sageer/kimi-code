@@ -1368,25 +1368,21 @@ describe('WorkspaceFsService.suggest', () => {
     const backend = fakeFs({ 'src/foo.ts': '', '/extra/foo-extra.ts': '' });
     let clock = 1_000;
     const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
-    const walk = backend.walk;
-    const deadlines: number[] = [];
+    let deadline: number | undefined;
     const roots: string[] = [];
     backend.walk = async (path, options) => {
       roots.push(path);
-      deadlines.push(options.deadlineMs ?? 0);
-      if (path === WORK_DIR) {
-        clock += 10_000;
-        return {
-          entries: [
-            { name: '/repo/src', isFile: false, isDirectory: true },
-            { name: '/repo/src/foo.ts', isFile: true, isDirectory: false },
-          ],
-          errors: [],
-          truncated: true,
-          responseBytes: 128,
-        };
-      }
-      return walk(path, options);
+      deadline = options.deadlineMs;
+      clock += 10_000;
+      return {
+        entries: [
+          { name: '/repo/src', isFile: false, isDirectory: true },
+          { name: '/repo/src/foo.ts', isFile: true, isDirectory: false },
+        ],
+        errors: [],
+        truncated: true,
+        responseBytes: 128,
+      };
     };
     try {
       const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
@@ -1407,7 +1403,7 @@ describe('WorkspaceFsService.suggest', () => {
       expect(result.items.map((item) => item.path)).toEqual(['src/foo.ts']);
       expect(result.truncated).toBe(true);
       expect(roots).toEqual([WORK_DIR]);
-      expect(deadlines).toEqual([11_000]);
+      expect(deadline).toBe(11_000);
     } finally {
       now.mockRestore();
     }
@@ -1733,7 +1729,7 @@ describe('WorkspaceFsService.grep', () => {
     expect(result.files_scanned).toBe(2);
   });
 
-  it('returns partial grep matches when the inventory reaches the shared deadline', async () => {
+  it('distinguishes partial matches from an empty timed-out inventory', async () => {
     const backend = fakeFs({ 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' });
     let clock = 1_000;
     const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
@@ -1775,22 +1771,10 @@ describe('WorkspaceFsService.grep', () => {
       expect(result.files_scanned).toBe(1);
       expect(result.truncated).toBe(true);
       expect(roots).toEqual([WORK_DIR]);
-    } finally {
-      now.mockRestore();
-    }
-  });
-
-  it('times out when the inventory deadline expires without discovering files', async () => {
-    const backend = fakeFs({ 'src/a.ts': 'hello\n' });
-    let clock = 1_000;
-    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
-    backend.walk = async () => {
-      clock += 30_000;
-      return { entries: [], errors: [], truncated: true, responseBytes: 64 };
-    };
-    try {
-      const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
-
+      backend.walk = async () => {
+        clock += 30_000;
+        return { entries: [], errors: [], truncated: true, responseBytes: 64 };
+      };
       await expect(fs.grep({
         pattern: 'hello',
         regex: false,

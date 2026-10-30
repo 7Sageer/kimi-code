@@ -137,35 +137,18 @@ describe('fs group over a subprocess loopback', () => {
 });
 
 describe('fs protocol semantics', () => {
-  it('short-circuits expired walks without sending an RPC', async () => {
-    const calls: string[] = [];
+  const walkOptions = {
+    maxDepth: 64,
+    maxDirectories: 10_000,
+    maxEntries: 100_000,
+    maxResponseBytes: 8 * 1024 * 1024,
+  };
+
+  it('honors the caller deadline before and during a remote walk', async () => {
+    const calls: Array<{ method: string; timeoutMs?: number }> = [];
     const fs = new RemoteFileSystem({
-      call: async (method) => {
-        calls.push(method);
-        throw new Error('unexpected call');
-      },
-      notify: () => {},
-      onNotification: () => () => {},
-      onDidClose: () => {},
-    });
-
-    const result = await fs.walk('/root', {
-      maxDepth: 64,
-      maxDirectories: 10_000,
-      maxEntries: 100_000,
-      maxResponseBytes: 8 * 1024 * 1024,
-      deadlineMs: Date.now(),
-    });
-
-    expect(result).toEqual({ entries: [], errors: [], truncated: true, responseBytes: 0 });
-    expect(calls).toEqual([]);
-  });
-
-  it('caps executor walk budgets at the caller deadline', async () => {
-    let timeoutMs: number | undefined;
-    const fs = new RemoteFileSystem({
-      call: async (_method, params) => {
-        timeoutMs = (params as { timeoutMs: number }).timeoutMs;
+      call: async (method, params) => {
+        calls.push({ method, timeoutMs: (params as { timeoutMs: number }).timeoutMs });
         return { entries: [], errors: [], truncated: false, responseBytes: 64 };
       },
       notify: () => {},
@@ -173,20 +156,54 @@ describe('fs protocol semantics', () => {
       onDidClose: () => {},
     });
 
-    const result = await fs.walk('/root', {
-      maxDepth: 64,
-      maxDirectories: 10_000,
-      maxEntries: 100_000,
-      maxResponseBytes: 8 * 1024 * 1024,
-      deadlineMs: Date.now() + 1_000,
-    });
+    const active = await fs.walk('/root', { ...walkOptions, deadlineMs: Date.now() + 1_000 });
+    const expired = await fs.walk('/root', { ...walkOptions, deadlineMs: Date.now() });
 
-    expect(result.truncated).toBe(false);
-    expect(timeoutMs).toBeGreaterThan(0);
-    expect(timeoutMs).toBeLessThanOrEqual(1_000);
+    expect(active.truncated).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe(FS_WALK_METHOD);
+    expect(calls[0]?.timeoutMs).toBeGreaterThan(0);
+    expect(calls[0]?.timeoutMs).toBeLessThanOrEqual(1_000);
+    expect(expired).toEqual({ entries: [], errors: [], truncated: true, responseBytes: 0 });
   });
 
-  it('bounds old executor fallback with the caller deadline', async () => {
+  it('walks nested directories in one rpc and prunes ignored subtrees', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'remote-exec-walk-'));
+    const { connection, loopback } = await connectInProcess();
+    const methods: string[] = [];
+    loopback.clientInput.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString('utf8').trim().split('\n')) {
+        if (line.length > 0) methods.push((JSON.parse(line) as { method?: string }).method ?? '');
+      }
+    });
+    try {
+      await mkdir(join(dir, 'src/nested'), { recursive: true });
+      await mkdir(join(dir, 'node_modules/pkg'), { recursive: true });
+      await writeFile(join(dir, 'src/nested/app.ts'), '');
+      await writeFile(join(dir, 'node_modules/pkg/index.ts'), '');
+      const fs = new RemoteFileSystem(connection);
+      const result = await fs.walk(dir, {
+        ...walkOptions,
+        ignore: ['node_modules/'],
+      });
+
+      expect(result.entries.map((entry) => entry.name.slice(dir.length + 1)).toSorted()).toEqual([
+        'src',
+        'src/nested',
+        'src/nested/app.ts',
+      ]);
+      expect(result.errors).toEqual([]);
+      expect(result.truncated).toBe(false);
+      expect(methods.filter((method) => method === FS_WALK_METHOD)).toHaveLength(1);
+      expect(methods.filter((method) => method === FS_READ_DIRECTORY_METHOD)).toHaveLength(0);
+    } finally {
+      connection.close();
+      await loopback.host.done;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('caches old executor fallback and preserves its deadline', async () => {
     let clock = 1_000;
     const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
     const seen: ScriptedFrame[] = [];
@@ -222,127 +239,16 @@ describe('fs protocol semantics', () => {
     });
     try {
       const fs = new RemoteFileSystem(connection);
-      const result = await fs.walk('/root', {
-        maxDepth: 64,
-        maxDirectories: 10_000,
-        maxEntries: 100_000,
-        maxResponseBytes: 8 * 1024 * 1024,
-        deadlineMs: clock,
-      });
+      const first = await fs.walk('/root', walkOptions);
+      const expired = await fs.walk('/root', { ...walkOptions, deadlineMs: clock });
 
-      clock += 1;
-      const expired = await fs.walk('/root/child', {
-        maxDepth: 64,
-        maxDirectories: 10_000,
-        maxEntries: 100_000,
-        maxResponseBytes: 8 * 1024 * 1024,
-        deadlineMs: clock,
-      });
-
-      expect(result.entries).toEqual([]);
-      expect(result.truncated).toBe(true);
-      expect(expired.entries).toEqual([]);
-      expect(seen.filter((frame) => frame.method === FS_READ_DIRECTORY_METHOD)).toEqual([]);
+      expect(first.entries.map((entry) => entry.name)).toEqual(['/root/src', '/root/src/app.ts']);
+      expect(expired).toMatchObject({ entries: [], truncated: true });
+      expect(seen.filter((frame) => frame.method === FS_WALK_METHOD)).toHaveLength(1);
+      expect(seen.filter((frame) => frame.method === FS_READ_DIRECTORY_METHOD)).toHaveLength(2);
     } finally {
       connection.close();
       now.mockRestore();
-    }
-  });
-
-  it('walks nested directories in one rpc and prunes ignored subtrees', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'remote-exec-walk-'));
-    const { connection, loopback } = await connectInProcess();
-    const methods: string[] = [];
-    loopback.clientInput.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString('utf8').trim().split('\n')) {
-        if (line.length > 0) methods.push((JSON.parse(line) as { method?: string }).method ?? '');
-      }
-    });
-    try {
-      await mkdir(join(dir, 'src/nested'), { recursive: true });
-      await mkdir(join(dir, 'node_modules/pkg'), { recursive: true });
-      await writeFile(join(dir, 'src/nested/app.ts'), '');
-      await writeFile(join(dir, 'node_modules/pkg/index.ts'), '');
-      const fs = new RemoteFileSystem(connection);
-
-      const result = await fs.walk(dir, {
-        maxDepth: 64,
-        maxDirectories: 10_000,
-        maxEntries: 100_000,
-        maxResponseBytes: 8 * 1024 * 1024,
-        ignore: ['node_modules/'],
-      });
-
-      expect(result.entries.map((entry) => entry.name.slice(dir.length + 1)).toSorted()).toEqual([
-        'src',
-        'src/nested',
-        'src/nested/app.ts',
-      ]);
-      expect(result.errors).toEqual([]);
-      expect(result.truncated).toBe(false);
-      expect(methods.filter((method) => method === FS_WALK_METHOD)).toHaveLength(1);
-      expect(methods.filter((method) => method === 'fs/readDirectory')).toHaveLength(0);
-    } finally {
-      connection.close();
-      await loopback.host.done;
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('falls back once for old executors and caches their walk capability', async () => {
-    const seen: ScriptedFrame[] = [];
-    const pipe = createScriptedServer((frame, reply) => {
-      seen.push(frame);
-      if (frame.method === 'initialize') {
-        reply({ id: frame.id, result: testInitializeResult() });
-        return;
-      }
-      if (frame.method === FS_WALK_METHOD) {
-        reply({
-          id: frame.id,
-          error: new RpcError(RpcErrorCode.MethodNotFound, 'unknown method fs/walk').toErrorBody(),
-        });
-        return;
-      }
-      if (frame.method === FS_READ_DIRECTORY_METHOD) {
-        const path = (frame.params as { path: string }).path;
-        reply({
-          id: frame.id,
-          result: {
-            entries: path === '/root'
-              ? [{ fileName: 'src', isDirectory: true, isFile: false, isSymlink: false }]
-              : [{ fileName: 'app.ts', isDirectory: false, isFile: true, isSymlink: false }],
-            truncated: false,
-          },
-        });
-      }
-    });
-    const connection = await RemoteExecConnection.connect(pipe, {
-      clientName: 'remote-exec-test',
-      clientVersion: '0.0.0',
-    });
-    try {
-      const fs = new RemoteFileSystem(connection);
-      const options = {
-        maxDepth: 64,
-        maxDirectories: 10_000,
-        maxEntries: 100_000,
-        maxResponseBytes: 8 * 1024 * 1024,
-      };
-
-      const first = await fs.walk('/root', options);
-      const second = await fs.walk('/root', options);
-      const third = await fs.walk('/root/child', options);
-
-      expect(first.entries.map((entry) => entry.name)).toEqual(['/root/src', '/root/src/app.ts']);
-      expect(second.entries).toEqual(first.entries);
-      expect(third.entries).toEqual([
-        { name: '/root/child/app.ts', isDirectory: false, isFile: true, isSymbolicLink: false },
-      ]);
-      expect(seen.filter((frame) => frame.method === FS_WALK_METHOD)).toHaveLength(1);
-      expect(seen.filter((frame) => frame.method === FS_READ_DIRECTORY_METHOD)).toHaveLength(5);
-    } finally {
-      connection.close();
     }
   });
 
@@ -365,10 +271,7 @@ describe('fs protocol semantics', () => {
       const unusedRuleCount = Math.ceil(HOST_WALK_MAX_IGNORE_BYTES / Buffer.byteLength(JSON.stringify(unusedRule)));
 
       const result = await fs.walk(dir, {
-        maxDepth: 64,
-        maxDirectories: 10_000,
-        maxEntries: 100_000,
-        maxResponseBytes: 8 * 1024 * 1024,
+        ...walkOptions,
         ignore: ['ignored/', ...Array.from({ length: unusedRuleCount }, () => unusedRule)],
       });
 

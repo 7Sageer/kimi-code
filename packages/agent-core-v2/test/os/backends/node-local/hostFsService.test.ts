@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { walkHostDirectory } from '#/os/interface/hostFsWalk';
@@ -156,67 +156,46 @@ describe('HostFileSystem walk', () => {
 
   it('counts entry and error JSON in the response budget', async () => {
     const backend = {
-      readdir: async (path: string) => {
-        if (path === '/root') return [{ name: 'a', isFile: true, isDirectory: false }];
-        throw new Error('unreadable');
-      },
+      readdir: async () => [{ name: 'a', isFile: true, isDirectory: false }],
     };
-    const read = () => walkHostDirectory(backend, '/root', {
-      ...options,
-      maxResponseBytes: 256,
-    });
-    const initial = await read();
-    const result = await walkHostDirectory(backend, '/root', {
-      ...options,
-      maxResponseBytes: initial.responseBytes - 1,
-    });
+    const initial = await walkHostDirectory(backend, '/root', options);
+    const tooSmall = await walkHostDirectory(backend, '/root', { ...options, maxResponseBytes: initial.responseBytes - 1 });
 
-    expect(initial.truncated).toBe(false);
-    expect(result.entries).toEqual([]);
-    expect(result.truncated).toBe(true);
+    expect(initial).toMatchObject({ truncated: false });
+    expect(tooSmall).toMatchObject({ entries: [], truncated: true });
 
-    const withError = await walkHostDirectory(backend, '/root', options, {
-      serializeError: (_path, error) => ({ message: error.message }),
-    }, async (path) => {
+    const readWithError = async (maxResponseBytes: number) => walkHostDirectory(backend, '/root', {
+      ...options,
+      maxResponseBytes,
+    }, {}, async (path) => {
       if (path === '/root') return [{ name: 'a', isFile: false, isDirectory: true }];
       throw new Error('unreadable');
     });
-    const beforeError = await walkHostDirectory(backend, '/root', {
-      ...options,
-      maxResponseBytes: withError.responseBytes - 1,
-    }, {
-      serializeError: (_path, error) => ({ message: error.message }),
-    }, async (path) => {
-      if (path === '/root') return [{ name: 'a', isFile: false, isDirectory: true }];
-      throw new Error('unreadable');
-    });
+    const withError = await readWithError(options.maxResponseBytes);
+    const beforeError = await readWithError(withError.responseBytes - 1);
 
     expect(withError.errors).toHaveLength(1);
-    expect(beforeError.errors).toEqual([]);
-    expect(beforeError.truncated).toBe(true);
+    expect(beforeError).toMatchObject({ errors: [], truncated: true });
   });
 
   it('returns partial entries at the deadline', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const timedOut = walkHostDirectory({
-      readdir: async () => [],
-    }, '/root', {
-      ...options,
-      deadlineMs: Date.now() + 5,
-    }, {}, async (path) => {
-      if (path === '/root') return [{ name: 'a', isFile: false, isDirectory: true }];
-      await gate;
-      return [{ name: 'file.ts', isFile: true, isDirectory: false }];
-    });
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    release();
-    const afterTimeout = await timedOut;
+    let clock = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      const result = await walkHostDirectory({ readdir: async () => [] }, '/root', {
+        ...options,
+        deadlineMs: clock + 5,
+      }, {}, async (path) => {
+        if (path === '/root') return [{ name: 'a', isFile: false, isDirectory: true }];
+        clock += 5;
+        return [{ name: 'file.ts', isFile: true, isDirectory: false }];
+      });
 
-    expect(afterTimeout.entries.map((entry) => entry.name)).toEqual(['/root/a']);
-    expect(afterTimeout.truncated).toBe(true);
+      expect(result.entries.map((entry) => entry.name)).toEqual(['/root/a']);
+      expect(result.truncated).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('does not start walking at an expired deadline', async () => {
