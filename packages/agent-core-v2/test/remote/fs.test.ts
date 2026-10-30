@@ -137,6 +137,112 @@ describe('fs group over a subprocess loopback', () => {
 });
 
 describe('fs protocol semantics', () => {
+  it('short-circuits aborted walks without sending an RPC', async () => {
+    const calls: string[] = [];
+    const fs = new RemoteFileSystem({
+      call: async (method) => {
+        calls.push(method);
+        throw new Error('unexpected call');
+      },
+      notify: () => {},
+      onNotification: () => () => {},
+      onDidClose: () => {},
+    });
+
+    const result = await fs.walk('/root', {
+      maxDepth: 64,
+      maxDirectories: 10_000,
+      maxEntries: 100_000,
+      maxResponseBytes: 8 * 1024 * 1024,
+      signal: AbortSignal.abort(),
+    });
+
+    expect(result).toEqual({ entries: [], errors: [], truncated: true, responseBytes: 0 });
+    expect(calls).toEqual([]);
+  });
+
+  it('returns a truncated walk when the caller aborts during the RPC', async () => {
+    const controller = new AbortController();
+    let finish!: (result: unknown) => void;
+    const fs = new RemoteFileSystem({
+      call: () => new Promise((resolve) => {
+        finish = resolve;
+      }),
+      notify: () => {},
+      onNotification: () => () => {},
+      onDidClose: () => {},
+    });
+
+    const walking = fs.walk('/root', {
+      maxDepth: 64,
+      maxDirectories: 10_000,
+      maxEntries: 100_000,
+      maxResponseBytes: 8 * 1024 * 1024,
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(walking).resolves.toEqual({
+      entries: [],
+      errors: [],
+      truncated: true,
+      responseBytes: 0,
+    });
+    finish({ entries: [], errors: [], truncated: false, responseBytes: 64 });
+  });
+
+  it('falls back to bounded directory reads after an old executor aborts a walk probe', async () => {
+    const controller = new AbortController();
+    const seen: ScriptedFrame[] = [];
+    const pipe = createScriptedServer((frame, reply) => {
+      seen.push(frame);
+      if (frame.method === 'initialize') {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === FS_WALK_METHOD) {
+        reply({
+          id: frame.id,
+          error: new RpcError(RpcErrorCode.MethodNotFound, 'unknown method fs/walk').toErrorBody(),
+        });
+        controller.abort();
+        return;
+      }
+      if (frame.method === FS_READ_DIRECTORY_METHOD) {
+        const path = (frame.params as { path: string }).path;
+        reply({
+          id: frame.id,
+          result: {
+            entries: path === '/root'
+              ? [{ fileName: 'src', isDirectory: true, isFile: false, isSymlink: false }]
+              : [{ fileName: 'app.ts', isDirectory: false, isFile: true, isSymlink: false }],
+            truncated: false,
+          },
+        });
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'remote-exec-test',
+      clientVersion: '0.0.0',
+    });
+    try {
+      const fs = new RemoteFileSystem(connection);
+      const result = await fs.walk('/root', {
+        maxDepth: 64,
+        maxDirectories: 10_000,
+        maxEntries: 100_000,
+        maxResponseBytes: 8 * 1024 * 1024,
+        signal: controller.signal,
+      });
+
+      expect(result.entries).toEqual([]);
+      expect(result.truncated).toBe(true);
+      expect(seen.filter((frame) => frame.method === FS_READ_DIRECTORY_METHOD)).toEqual([]);
+    } finally {
+      connection.close();
+    }
+  });
+
   it('walks nested directories in one rpc and prunes ignored subtrees', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'remote-exec-walk-'));
     const { connection, loopback } = await connectInProcess();

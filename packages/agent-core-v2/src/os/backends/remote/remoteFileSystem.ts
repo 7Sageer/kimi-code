@@ -13,7 +13,7 @@ import type {
   HostWalkResult,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
-import { HOST_WALK_MAX_IGNORE_BYTES, walkHostDirectory } from '#/os/interface/hostFsWalk';
+import { EMPTY_HOST_WALK_RESULT, HOST_WALK_MAX_IGNORE_BYTES, walkHostDirectory } from '#/os/interface/hostFsWalk';
 import {
   HostFsError,
   OsFsErrors,
@@ -246,12 +246,13 @@ export class RemoteFileSystem implements IHostFileSystem {
   }
 
   async walk(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
+    if (options.signal?.aborted === true) return EMPTY_HOST_WALK_RESULT;
     if (this.walkSupported === false) return this.walkFallback(path, options);
     if (options.ignore !== undefined && Buffer.byteLength(JSON.stringify(options.ignore)) > HOST_WALK_MAX_IGNORE_BYTES) {
       return this.walkFallback(path, options);
     }
     try {
-      const result = await this.connection.call(FS_WALK_METHOD, {
+      const call = this.connection.call(FS_WALK_METHOD, {
         path,
         maxDepth: options.maxDepth,
         maxDirectories: options.maxDirectories,
@@ -259,7 +260,9 @@ export class RemoteFileSystem implements IHostFileSystem {
         maxResponseBytes: options.maxResponseBytes,
         ignore: options.ignore,
         timeoutMs: options.timeoutMs,
-      }) as FsWalkResult;
+      }) as Promise<FsWalkResult>;
+      const result = options.signal === undefined ? await call : await this.raceWalkAbort(call, options.signal);
+      if (result === undefined) return EMPTY_HOST_WALK_RESULT;
       this.walkSupported = true;
       return {
         entries: result.entries,
@@ -281,6 +284,26 @@ export class RemoteFileSystem implements IHostFileSystem {
 
   private async walkFallback(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
     return walkHostDirectory(this, path, options, { path: REMOTE_WALK_PATH });
+  }
+
+  private async raceWalkAbort(
+    call: Promise<FsWalkResult>,
+    signal: AbortSignal,
+  ): Promise<FsWalkResult | undefined> {
+    let onAbort: () => void;
+    const aborted = new Promise<undefined>((resolve) => {
+      onAbort = () => resolve(undefined);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([call, aborted]);
+    } catch (error) {
+      if (signal.aborted) return undefined;
+      throw error;
+    } finally {
+      signal.removeEventListener('abort', onAbort!);
+      call.catch(() => {});
+    }
   }
 
   async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {

@@ -1028,9 +1028,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const seenPaths = new Set<string>();
     let matched = 0;
     let inventoryTruncated = false;
+    const deadline = Date.now() + SUGGEST_TIMEOUT_MS;
     try {
       for (const root of roots) {
+        if (signal.aborted) break;
         const ignoreRules = query.followGitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          inventoryTruncated = true;
+          break;
+        }
         inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, _name, kind) => {
           if (signal.aborted) throw SUGGEST_WALK_ABORTED;
           if (multi) {
@@ -1042,7 +1049,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           if (candidate === null) return;
           matched += 1;
           top.push(this.displayCandidate(root, candidate));
-        }, { signal, timeoutMs: SUGGEST_TIMEOUT_MS }) || inventoryTruncated;
+        }, { signal, timeoutMs: Math.max(1, remainingMs) }) || inventoryTruncated;
       }
     } catch (error) {
       if (error !== SUGGEST_WALK_ABORTED) throw error;
@@ -1191,8 +1198,15 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const filePaths: { path: string; absolute: string }[] = [];
     const seenPaths = new Set<string>();
     const roots = await this.suggestRoots();
+    const deadline = startedAt + GREP_TIMEOUT_MS;
     for (const root of roots) {
+      if (signal.aborted) break;
       const ignoreRules = req.follow_gitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        truncated = true;
+        break;
+      }
       truncated = await this.walk(root.dir, ignoreRules, async (rel, _name, kind) => {
         if (kind !== 'file') return;
         if (req.include_globs && !matchesAnyGlob(rel, req.include_globs)) return;
@@ -1204,7 +1218,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           path: this.suggestDisplayPath(root, rel),
           absolute: this.path.join(root.dir, rel),
         });
-      }, { signal, timeoutMs: GREP_TIMEOUT_MS }) || truncated;
+      }, { signal, timeoutMs: Math.max(1, remainingMs) }) || truncated;
     }
 
     for (const file of filePaths) {

@@ -14,6 +14,13 @@ export const HOST_WALK_DEFAULT_TIMEOUT_MS = 55_000;
 export const HOST_WALK_MAX_TIMEOUT_MS = 60_000;
 export const HOST_WALK_MAX_DIRECTORY_ENTRIES = 50_000;
 
+export const EMPTY_HOST_WALK_RESULT: HostWalkResult = {
+  entries: [],
+  errors: [],
+  truncated: true,
+  responseBytes: 0,
+};
+
 interface HostWalkerFs {
   readdir(path: string): Promise<readonly HostDirEntry[]>;
 }
