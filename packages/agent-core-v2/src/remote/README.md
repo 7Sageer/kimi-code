@@ -67,6 +67,11 @@ deviations per the design spec, plus one forced addition:
 - `fs/readDirectory` preserves the symlink marker on each entry. The client
   rejects a truncated listing with `os.fs.directory_too_large` rather than
   exposing an incomplete directory; the current limit is 50,000 entries.
+- `fs/walk` performs a bounded recursive listing in one call. It accepts the
+  root ignore rules needed to prune ignored directories before traversal and
+  reports entries, recoverable directory errors, and truncation. Clients fall
+  back to per-directory reads when an older executor does not implement it or
+  when the JSON-encoded ignore rules exceed 1MiB.
 - Added `fs/rename` (no codex counterpart).
 - `fs/remove` takes only `path` and always removes recursively and ignores a
   missing path, matching `IHostFileSystem.remove` (codex has `recursive`/`force`).
@@ -89,7 +94,7 @@ deviations per the design spec, plus one forced addition:
 - `environment` adds `osArch`/`osVersion`/`pathClass` over codex (rg artifact
   selection needs arch), plus `cwd`/`tempDir`.
 - No ws transport, no `resumeSessionId`, no sandbox parameter family, no
-  `fs/walk`/`fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
+  `fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
 
 Process output is delivered through notifications (`process/output`,
 `process/exited`, `process/closed`). The executor retains process handles until

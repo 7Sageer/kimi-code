@@ -1,18 +1,29 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { HostFsError } from '#/os/interface/hostFsErrors';
+import { HOST_WALK_MAX_IGNORE_BYTES } from '#/os/interface/hostFsWalk';
 
 import { RemoteExecConnection } from '#/remote/client/connection';
 import { RemoteFileSystem } from '#/os/backends/remote/remoteFileSystem';
-import { FS_READ_DIRECTORY_MAX_ENTRIES, FS_READ_FILE_WHOLE_MAX_BYTES } from '#/remote/protocol/methods';
 import {
+  FS_READ_DIRECTORY_MAX_ENTRIES,
+  FS_READ_DIRECTORY_METHOD,
+  FS_READ_FILE_WHOLE_MAX_BYTES,
+  FS_WALK_METHOD,
+} from '#/remote/protocol/methods';
+import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
+import {
+  connectInProcess,
   connectSubprocess,
   createInProcessLoopback,
+  createScriptedServer,
   RawClient,
+  testInitializeResult,
+  type ScriptedFrame,
   type SpawnedExecutor,
 } from './helpers/loopback';
 
@@ -126,6 +137,162 @@ describe('fs group over a subprocess loopback', () => {
 });
 
 describe('fs protocol semantics', () => {
+  it('walks nested directories in one rpc and prunes ignored subtrees', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'remote-exec-walk-'));
+    const { connection, loopback } = await connectInProcess();
+    const methods: string[] = [];
+    loopback.clientInput.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString('utf8').trim().split('\n')) {
+        if (line.length > 0) methods.push((JSON.parse(line) as { method?: string }).method ?? '');
+      }
+    });
+    try {
+      await mkdir(join(dir, 'src/nested'), { recursive: true });
+      await mkdir(join(dir, 'node_modules/pkg'), { recursive: true });
+      await writeFile(join(dir, 'src/nested/app.ts'), '');
+      await writeFile(join(dir, 'node_modules/pkg/index.ts'), '');
+      const fs = new RemoteFileSystem(connection);
+
+      const result = await fs.walk(dir, {
+        maxDepth: 64,
+        maxDirectories: 10_000,
+        maxEntries: 100_000,
+        maxResponseBytes: 8 * 1024 * 1024,
+        ignore: ['node_modules/'],
+      });
+
+      expect(result.entries.map((entry) => entry.name.slice(dir.length + 1)).toSorted()).toEqual([
+        'src',
+        'src/nested',
+        'src/nested/app.ts',
+      ]);
+      expect(result.errors).toEqual([]);
+      expect(result.truncated).toBe(false);
+      expect(methods.filter((method) => method === FS_WALK_METHOD)).toHaveLength(1);
+      expect(methods.filter((method) => method === 'fs/readDirectory')).toHaveLength(0);
+    } finally {
+      connection.close();
+      await loopback.host.done;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back once for old executors and caches their walk capability', async () => {
+    const seen: ScriptedFrame[] = [];
+    const pipe = createScriptedServer((frame, reply) => {
+      seen.push(frame);
+      if (frame.method === 'initialize') {
+        reply({ id: frame.id, result: testInitializeResult() });
+        return;
+      }
+      if (frame.method === FS_WALK_METHOD) {
+        reply({
+          id: frame.id,
+          error: new RpcError(RpcErrorCode.MethodNotFound, 'unknown method fs/walk').toErrorBody(),
+        });
+        return;
+      }
+      if (frame.method === FS_READ_DIRECTORY_METHOD) {
+        const path = (frame.params as { path: string }).path;
+        reply({
+          id: frame.id,
+          result: {
+            entries: path === '/root'
+              ? [{ fileName: 'src', isDirectory: true, isFile: false, isSymlink: false }]
+              : [{ fileName: 'app.ts', isDirectory: false, isFile: true, isSymlink: false }],
+            truncated: false,
+          },
+        });
+      }
+    });
+    const connection = await RemoteExecConnection.connect(pipe, {
+      clientName: 'remote-exec-test',
+      clientVersion: '0.0.0',
+    });
+    try {
+      const fs = new RemoteFileSystem(connection);
+      const options = {
+        maxDepth: 64,
+        maxDirectories: 10_000,
+        maxEntries: 100_000,
+        maxResponseBytes: 8 * 1024 * 1024,
+      };
+
+      const first = await fs.walk('/root', options);
+      const second = await fs.walk('/root', options);
+      const third = await fs.walk('/root/child', options);
+
+      expect(first.entries.map((entry) => entry.name)).toEqual(['/root/src', '/root/src/app.ts']);
+      expect(second.entries).toEqual(first.entries);
+      expect(third.entries).toEqual([
+        { name: '/root/child/app.ts', isDirectory: false, isFile: true, isSymbolicLink: false },
+      ]);
+      expect(seen.filter((frame) => frame.method === FS_WALK_METHOD)).toHaveLength(1);
+      expect(seen.filter((frame) => frame.method === FS_READ_DIRECTORY_METHOD)).toHaveLength(5);
+    } finally {
+      connection.close();
+    }
+  });
+
+  it('falls back locally for oversized ignore rules without pruning them', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'remote-exec-walk-ignore-cap-'));
+    const { connection, loopback } = await connectInProcess();
+    const methods: string[] = [];
+    loopback.clientInput.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString('utf8').trim().split('\n')) {
+        if (line.length > 0) methods.push((JSON.parse(line) as { method?: string }).method ?? '');
+      }
+    });
+    try {
+      await mkdir(join(dir, 'src'));
+      await mkdir(join(dir, 'ignored'));
+      await writeFile(join(dir, 'src/app.ts'), '');
+      await writeFile(join(dir, 'ignored/app.ts'), '');
+      const fs = new RemoteFileSystem(connection);
+      const unusedRule = `unused-${'x'.repeat(8 * 1024)}`;
+      const unusedRuleCount = Math.ceil(HOST_WALK_MAX_IGNORE_BYTES / Buffer.byteLength(JSON.stringify(unusedRule)));
+
+      const result = await fs.walk(dir, {
+        maxDepth: 64,
+        maxDirectories: 10_000,
+        maxEntries: 100_000,
+        maxResponseBytes: 8 * 1024 * 1024,
+        ignore: ['ignored/', ...Array.from({ length: unusedRuleCount }, () => unusedRule)],
+      });
+
+      expect(result.entries.map((entry) => entry.name.slice(dir.length + 1)).toSorted()).toEqual([
+        'src',
+        'src/app.ts',
+      ]);
+      expect(result.truncated).toBe(false);
+      expect(methods.filter((method) => method === FS_WALK_METHOD)).toHaveLength(0);
+      expect(methods.filter((method) => method === FS_READ_DIRECTORY_METHOD)).toHaveLength(2);
+    } finally {
+      connection.close();
+      await loopback.host.done;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects oversized ignore rules on the wire', async () => {
+    const loopback = createInProcessLoopback();
+    const raw = new RawClient(loopback);
+    await raw.handshake();
+    raw.send({
+      id: 1,
+      method: FS_WALK_METHOD,
+      params: {
+        path: '/root',
+        ignore: ['x'.repeat(HOST_WALK_MAX_IGNORE_BYTES)],
+      },
+    });
+
+    const response = await raw.nextResponse(1);
+    expect(response['error']).toMatchObject({ code: RpcErrorCode.InvalidParams });
+    loopback.clientInput.end();
+    await loopback.host.done;
+  });
+
   it('reports capped directory listings on the wire and rejects them through the filesystem interface', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'remote-exec-readdir-cap-'));
     const smallDir = await mkdtemp(join(tmpdir(), 'remote-exec-readdir-small-'));

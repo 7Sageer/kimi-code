@@ -49,6 +49,12 @@ import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import {
+  HOST_WALK_MAX_DEPTH,
+  HOST_WALK_MAX_DIRECTORIES,
+  HOST_WALK_MAX_ENTRIES,
+  HOST_WALK_MAX_RESPONSE_BYTES,
+} from '#/os/interface/hostFsWalk';
 import { type EnvironmentPath } from '#/environment/environment';
 import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
@@ -84,7 +90,7 @@ const PROBE_MAX_ENTRIES = 500;
 const GREP_TIMEOUT_MS = 30_000;
 const SUGGEST_TIMEOUT_MS = 10_000;
 const SUGGEST_WALK_ABORTED = new Error('suggest walk aborted');
-const WALK_MAX_DEPTH = 64;
+const WALK_DEFAULT_IGNORE = ['.git/'];
 
 interface SuggestRoot {
   readonly dir: string;
@@ -100,7 +106,10 @@ const MACOS_NOISE = new Set(['.DS_Store', '.AppleDouble', '.LSOverride']);
 export class WorkspaceFsService implements IWorkspaceFsService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly gitignoreCache = new Map<string, Ignore>();
+  private readonly gitignoreCache = new Map<string, {
+    readonly matcher: Ignore;
+    readonly walkRules: readonly string[];
+  }>();
   private rgResolution: RgResolution | null | undefined = undefined;
   private realRootsCache:
     | { readonly key: string; readonly roots: readonly { dir: string; real: string }[] }
@@ -679,9 +688,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const candidates: FsSearchHit[] = [];
     const queryLower = req.query.toLowerCase();
     const seenPaths = new Set<string>();
+    let inventoryTruncated = false;
     for (const root of roots) {
-      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
-      await this.walk(root.dir, '', matcher, async (relPath, name, kind) => {
+      const ignoreRules = req.follow_gitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
+      inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, name, kind) => {
         const pathKey = `${root.real}/${relPath}`;
         if (seenPaths.has(pathKey)) return;
         seenPaths.add(pathKey);
@@ -701,7 +711,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           score,
           match_positions: computeMatchPositions(path, queryLower),
         });
-      });
+      }) || inventoryTruncated;
     }
 
     candidates.sort((a, b) => {
@@ -711,7 +721,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
     const effectiveCap = Math.min(req.limit, SEARCH_HARD_CAP);
     const truncated = candidates.length > effectiveCap;
-    return { items: candidates.slice(0, effectiveCap), truncated };
+    return { items: candidates.slice(0, effectiveCap), truncated: truncated || inventoryTruncated };
   }
 
   async suggest(req: FsSuggestRequest): Promise<FsSuggestResponse> {
@@ -1017,10 +1027,11 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const top = new SuggestTopHeap(cap);
     const seenPaths = new Set<string>();
     let matched = 0;
+    let inventoryTruncated = false;
     try {
       for (const root of roots) {
-        const matcher = query.followGitignore ? await this.matcherFor(root.dir) : undefined;
-        await this.walk(root.dir, '', matcher, async (relPath, _name, kind) => {
+        const ignoreRules = query.followGitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
+        inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, _name, kind) => {
           if (signal.aborted) throw SUGGEST_WALK_ABORTED;
           if (multi) {
             const pathKey = `${root.real}/${relPath}`;
@@ -1031,7 +1042,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           if (candidate === null) return;
           matched += 1;
           top.push(this.displayCandidate(root, candidate));
-        });
+        }, { signal, timeoutMs: SUGGEST_TIMEOUT_MS }) || inventoryTruncated;
       }
     } catch (error) {
       if (error !== SUGGEST_WALK_ABORTED) throw error;
@@ -1043,7 +1054,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       score: candidate.score,
       match_positions: [...candidate.positions],
     }));
-    return { items, truncated: matched > cap || signal.aborted };
+    return { items, truncated: matched > cap || signal.aborted || inventoryTruncated };
   }
 
   async grep(req: FsGrepRequest): Promise<FsGrepResponse> {
@@ -1181,8 +1192,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const seenPaths = new Set<string>();
     const roots = await this.suggestRoots();
     for (const root of roots) {
-      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
-      await this.walk(root.dir, '', matcher, async (rel, _name, kind) => {
+      const ignoreRules = req.follow_gitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
+      truncated = await this.walk(root.dir, ignoreRules, async (rel, _name, kind) => {
         if (kind !== 'file') return;
         if (req.include_globs && !matchesAnyGlob(rel, req.include_globs)) return;
         if (req.exclude_globs && matchesAnyGlob(rel, req.exclude_globs)) return;
@@ -1193,7 +1204,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           path: this.suggestDisplayPath(root, rel),
           absolute: this.path.join(root.dir, rel),
         });
-      });
+      }, { signal, timeoutMs: GREP_TIMEOUT_MS }) || truncated;
     }
 
     for (const file of filePaths) {
@@ -1249,58 +1260,83 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async walk(
     baseAbs: string,
-    rootRel: string,
-    matcher: Ignore | undefined,
+    ignoreRules: readonly string[] | undefined,
     visit: (
       relPath: string,
       name: string,
       kind: 'file' | 'directory' | 'symlink',
     ) => Promise<void>,
-    depth = 0,
-  ): Promise<void> {
-    if (depth > WALK_MAX_DEPTH) return;
-    let entries: readonly HostDirEntry[];
-    try {
-      entries = await this.hostFs.readdir(rootRel === '' ? baseAbs : this.path.join(baseAbs, rootRel));
-    } catch (error) {
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<boolean> {
+    const result = await this.hostFs.walk(baseAbs, {
+      maxDepth: HOST_WALK_MAX_DEPTH,
+      maxDirectories: HOST_WALK_MAX_DIRECTORIES,
+      maxEntries: HOST_WALK_MAX_ENTRIES,
+      maxResponseBytes: HOST_WALK_MAX_RESPONSE_BYTES,
+      ignore: ignoreRules,
+      timeoutMs: options.timeoutMs,
+      signal: options.signal,
+    });
+    for (const { path, error } of result.errors) {
       if (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) {
-        throw mapFsError(error, rootRel);
-      }
-      return;
-    }
-    for (const entry of entries) {
-      const { name } = entry;
-      if (name === '.git') continue;
-      const childRel = rootRel === '' ? name : `${rootRel}/${name}`;
-      const isDir = entry.isDirectory && entry.isSymbolicLink !== true;
-      if (matcher) {
-        const probe = isDir ? `${childRel}/` : childRel;
-        if (matcher.ignores(probe)) continue;
-      }
-      const kind: 'file' | 'directory' | 'symlink' = entry.isSymbolicLink
-        ? 'symlink'
-        : isDir
-          ? 'directory'
-          : 'file';
-      await visit(childRel, name, kind);
-      if (isDir) {
-        await this.walk(baseAbs, childRel, matcher, visit, depth + 1);
+        throw mapFsError(error, path);
       }
     }
+    const byParent = new Map<string, { entry: HostDirEntry; relPath: string }[]>();
+    for (const entry of result.entries) {
+      const relPath = this.path.relative(baseAbs, entry.name).split(this.path.separator).join('/');
+      if (relPath === '' || relPath === '..' || relPath.startsWith('../')) continue;
+      const slash = relPath.lastIndexOf('/');
+      const parent = slash < 0 ? '' : relPath.slice(0, slash);
+      const name = slash < 0 ? relPath : relPath.slice(slash + 1);
+      const siblings = byParent.get(parent) ?? [];
+      siblings.push({ entry: { ...entry, name }, relPath });
+      byParent.set(parent, siblings);
+    }
+    const visitDirectory = async (parent: string): Promise<void> => {
+      for (const { entry, relPath } of byParent.get(parent) ?? []) {
+        const { name } = entry;
+        if (name === '.git') continue;
+        const isDir = entry.isDirectory && entry.isSymbolicLink !== true;
+        const kind: 'file' | 'directory' | 'symlink' = entry.isSymbolicLink
+          ? 'symlink'
+          : isDir
+            ? 'directory'
+            : 'file';
+        await visit(relPath, name, kind);
+        if (isDir) await visitDirectory(relPath);
+      }
+    };
+    await visitDirectory('');
+    return result.truncated;
   }
 
   private async matcherFor(rootDir: string): Promise<Ignore | undefined> {
+    return (await this.ignoreFor(rootDir)).matcher;
+  }
+
+  private async walkIgnoreFor(rootDir: string): Promise<readonly string[]> {
+    return (await this.ignoreFor(rootDir)).walkRules;
+  }
+
+  private async ignoreFor(rootDir: string): Promise<{
+    readonly matcher: Ignore;
+    readonly walkRules: readonly string[];
+  }> {
     const cached = this.gitignoreCache.get(rootDir);
     if (cached !== undefined) return cached;
     const ig = ignore();
     ig.add('.git/');
+    let contents = '';
     try {
-      const contents = await this.hostFs.readText(this.path.join(rootDir, '.gitignore'));
+      contents = await this.hostFs.readText(this.path.join(rootDir, '.gitignore'));
       ig.add(contents);
     } catch {
     }
-    this.gitignoreCache.set(rootDir, ig);
-    return ig;
+    const rules = ['.git/', ...contents.split(/\r?\n/)];
+    const result = { matcher: ig, walkRules: rules };
+    this.gitignoreCache.set(rootDir, result);
+    return result;
   }
 
   private async resolveRg(): Promise<RgResolution | null> {

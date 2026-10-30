@@ -13,6 +13,7 @@ import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
+import { walkHostDirectory } from '#/os/interface/hostFsWalk';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
@@ -151,7 +152,7 @@ function fakeFs(
     }
     throw enoent(p);
   };
-  return {
+  const fs: IHostFileSystem = {
     _serviceBrand: undefined,
     readText: async (p) => {
       const c = fileMap.get(resolveSymlinks(p));
@@ -207,6 +208,7 @@ function fakeFs(
       for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
+    walk: (path, options) => walkHostDirectory(fs, path, options),
     mkdir: async (p, options) => {
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
@@ -259,6 +261,7 @@ function fakeFs(
       return current;
     },
   };
+  return fs;
 }
 
 function fakeProcess(stdout: string, stderr: string, exitCode: number): IHostProcess {
@@ -564,6 +567,26 @@ describe('WorkspaceFsService.search', () => {
     expect(paths).toContain('src/link');
     expect(result.items.find((i) => i.path === 'src/link')?.kind).toBe('symlink');
     expect(paths.some((p) => p.startsWith('src/link/'))).toBe(false);
+  });
+
+  it('keeps the original deep-directory boundary', async () => {
+    const files: Record<string, string> = {};
+    let current = 'root';
+    files[`${current}/match.ts`] = '';
+    for (let depth = 1; depth <= 66; depth += 1) {
+      current = `${current}/level-${depth}`;
+      if (depth === 63 || depth === 64 || depth === 65) files[`${current}/match.ts`] = '';
+    }
+    const fs = makeSession(files, emptyHandler);
+    const deepPath = Array.from({ length: 63 }, (_, index) => `level-${index + 1}`).join('/');
+
+    const result = await fs.search({ query: 'match', limit: 50, follow_gitignore: false });
+
+    expect(result.items.map((item) => item.path).toSorted()).toEqual([
+      'root/match.ts',
+      `root/${deepPath}/match.ts`,
+    ].toSorted());
+    expect(result.items.some((item) => item.path.includes('level-64/'))).toBe(false);
   });
 
   it('lists the workspace root top-level entries when the query is empty', async () => {
@@ -952,6 +975,79 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: true,
     });
     expect(on.items.map((i) => i.path)).toContain('.secret.ts');
+  });
+
+  it('passes ignore rules to the walk and reports inventory truncation', async () => {
+    const backend = fakeFs({
+      '.gitignore': 'node_modules/\n',
+      'src/app.ts': '',
+      'node_modules/pkg/index.ts': '',
+    });
+    let receivedIgnore: readonly string[] | undefined;
+    backend.walk = async (_path, options) => {
+      receivedIgnore = options.ignore;
+      return { entries: [], errors: [], truncated: true, responseBytes: 64 };
+    };
+    const fs = makeRemoteSession(
+      { '.gitignore': 'node_modules/\n' },
+      () => ({ stdout: '', exitCode: 127 }),
+      [],
+      'ssh-dev',
+      '/home/target',
+      backend,
+    );
+
+    const result = await fs.suggest({
+      query: 'app',
+      limit: 50,
+      show_hidden: false,
+      follow_gitignore: true,
+    });
+
+    expect(receivedIgnore).toEqual(['.git/', 'node_modules/', '']);
+    expect(result).toEqual({ items: [], truncated: true });
+  });
+
+  it('keeps matching and file enumeration order when using batched walks', async () => {
+    const backend = fakeFs({
+      '.git/config': 'hello\n',
+      'a/first.ts': 'hello\n',
+      'a/nested/second.ts': 'hello\n',
+      'z.ts': 'hello\n',
+    });
+    const readdir = backend.readdir.bind(backend);
+    const reads: string[] = [];
+    backend.readdir = async (path) => {
+      reads.push(path);
+      return readdir(path);
+    };
+    const fs = makeRemoteSession(
+      {},
+      () => ({ stdout: '', exitCode: 127 }),
+      [],
+      'ssh-dev',
+      '/home/target',
+      backend,
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: false,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(result.files.map((file) => file.path)).toEqual([
+      'a/nested/second.ts',
+      'a/first.ts',
+      'z.ts',
+    ]);
+    expect(result.files.some((file) => file.path.startsWith('.git/'))).toBe(false);
+    expect(reads).toEqual(['/repo', '/repo/a', '/repo/a/nested']);
   });
 
   it('falls back to the node walk when rg fails to spawn', async () => {

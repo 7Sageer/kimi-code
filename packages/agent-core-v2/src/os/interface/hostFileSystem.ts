@@ -18,6 +18,28 @@ export interface HostDirEntry {
   readonly isSymbolicLink?: boolean;
 }
 
+export interface HostWalkOptions {
+  readonly maxDepth: number;
+  readonly maxDirectories: number;
+  readonly maxEntries: number;
+  readonly maxResponseBytes: number;
+  readonly ignore?: readonly string[];
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface HostWalkError {
+  readonly path: string;
+  readonly error: Error;
+}
+
+export interface HostWalkResult {
+  readonly entries: readonly HostDirEntry[];
+  readonly errors: readonly HostWalkError[];
+  readonly truncated: boolean;
+  readonly responseBytes: number;
+}
+
 export interface IHostFileSystem {
   readonly _serviceBrand: undefined;
 
@@ -37,6 +59,7 @@ export interface IHostFileSystem {
   stat(path: string): Promise<HostFileStat>;
   lstat(path: string): Promise<HostFileStat>;
   readdir(path: string): Promise<readonly HostDirEntry[]>;
+  walk(path: string, options: HostWalkOptions): Promise<HostWalkResult>;
   mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void>;
   remove(path: string): Promise<void>;
   rename?(from: string, to: string): Promise<void>;
