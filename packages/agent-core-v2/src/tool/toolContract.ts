@@ -1,5 +1,5 @@
 import type { ToolResultSpill } from '#/_base/text/outputLimits';
-import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
+import type { ContentPart, SystemMessage, ToolCall, ToolDescription as Tool, UserMessage } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -20,6 +20,8 @@ export interface ToolDelivery {
   readonly kind: ToolDeliveryKind;
   readonly message: ToolDeliveryMessage;
 }
+
+export type ToolRemind = (message: SystemMessage | UserMessage) => void;
 
 export interface ExecutableToolSuccessResult {
   readonly output: ExecutableToolOutput;
@@ -65,6 +67,7 @@ export interface ExecutableToolContext {
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
   readonly steerSignal?: AbortSignal;
+  readonly remind?: ToolRemind;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
   readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
 }
