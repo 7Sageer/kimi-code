@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { HostFsError } from '#/os/interface/hostFsErrors';
 import { HOST_WALK_MAX_IGNORE_BYTES } from '#/os/interface/hostFsWalk';
@@ -15,15 +15,12 @@ import {
   FS_READ_FILE_WHOLE_MAX_BYTES,
   FS_WALK_METHOD,
 } from '#/remote/protocol/methods';
-import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
+import { RpcErrorCode } from '#/remote/protocol/errors';
 import {
   connectInProcess,
   connectSubprocess,
   createInProcessLoopback,
-  createScriptedServer,
   RawClient,
-  testInitializeResult,
-  type ScriptedFrame,
   type SpawnedExecutor,
 } from './helpers/loopback';
 
@@ -200,55 +197,6 @@ describe('fs protocol semantics', () => {
       connection.close();
       await loopback.host.done;
       await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('caches old executor fallback and preserves its deadline', async () => {
-    let clock = 1_000;
-    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
-    const seen: ScriptedFrame[] = [];
-    const pipe = createScriptedServer((frame, reply) => {
-      seen.push(frame);
-      if (frame.method === 'initialize') {
-        reply({ id: frame.id, result: testInitializeResult() });
-        return;
-      }
-      if (frame.method === FS_WALK_METHOD) {
-        reply({
-          id: frame.id,
-          error: new RpcError(RpcErrorCode.MethodNotFound, 'unknown method fs/walk').toErrorBody(),
-        });
-        return;
-      }
-      if (frame.method === FS_READ_DIRECTORY_METHOD) {
-        const path = (frame.params as { path: string }).path;
-        reply({
-          id: frame.id,
-          result: {
-            entries: path === '/root'
-              ? [{ fileName: 'src', isDirectory: true, isFile: false, isSymlink: false }]
-              : [{ fileName: 'app.ts', isDirectory: false, isFile: true, isSymlink: false }],
-            truncated: false,
-          },
-        });
-      }
-    });
-    const connection = await RemoteExecConnection.connect(pipe, {
-      clientName: 'remote-exec-test',
-      clientVersion: '0.0.0',
-    });
-    try {
-      const fs = new RemoteFileSystem(connection);
-      const first = await fs.walk('/root', walkOptions);
-      const expired = await fs.walk('/root', { ...walkOptions, deadlineMs: clock });
-
-      expect(first.entries.map((entry) => entry.name)).toEqual(['/root/src', '/root/src/app.ts']);
-      expect(expired).toMatchObject({ entries: [], truncated: true });
-      expect(seen.filter((frame) => frame.method === FS_WALK_METHOD)).toHaveLength(1);
-      expect(seen.filter((frame) => frame.method === FS_READ_DIRECTORY_METHOD)).toHaveLength(2);
-    } finally {
-      connection.close();
-      now.mockRestore();
     }
   });
 

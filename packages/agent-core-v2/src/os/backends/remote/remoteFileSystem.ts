@@ -78,7 +78,6 @@ function isUtf8Encoding(encoding: BufferEncoding): boolean {
 
 export class RemoteFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
-  private walkSupported: boolean | undefined;
 
   constructor(private readonly connection: ExecChannel) {}
 
@@ -258,7 +257,6 @@ export class RemoteFileSystem implements IHostFileSystem {
       remainingMs ?? HOST_WALK_DEFAULT_TIMEOUT_MS,
       HOST_WALK_DEFAULT_TIMEOUT_MS,
     ));
-    if (this.walkSupported === false) return this.walkFallback(path, options);
     if (options.ignore !== undefined && Buffer.byteLength(JSON.stringify(options.ignore)) > HOST_WALK_MAX_IGNORE_BYTES) {
       return this.walkFallback(path, options);
     }
@@ -272,7 +270,6 @@ export class RemoteFileSystem implements IHostFileSystem {
         ignore: options.ignore,
         timeoutMs,
       }) as FsWalkResult;
-      this.walkSupported = true;
       return {
         entries: result.entries,
         errors: result.errors.map(({ path: errorPath, error }) => ({
@@ -283,10 +280,6 @@ export class RemoteFileSystem implements IHostFileSystem {
         responseBytes: result.responseBytes,
       };
     } catch (error) {
-      if (error instanceof RpcError && error.code === RpcErrorCode.MethodNotFound) {
-        this.walkSupported = false;
-        return this.walkFallback(path, options);
-      }
       throw toRemoteFsError(error);
     }
   }

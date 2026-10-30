@@ -70,9 +70,9 @@ deviations per the design spec, plus one forced addition:
 - `fs/walk` performs a bounded recursive listing in one call. It accepts the
   root ignore rules needed to prune ignored directories before traversal and
   reports entries, recoverable directory errors, and truncation. Clients fall
-  back to per-directory reads when an older executor does not implement it or
-  when the JSON-encoded ignore rules exceed 1MiB. Walks default to a 55-second
-  budget so they can return a truncated result before the 60-second RPC deadline.
+  back to per-directory reads when the JSON-encoded ignore rules exceed 1MiB.
+  Walks default to a 55-second budget so they can return a truncated result
+  before the 60-second RPC deadline.
 - Added `fs/rename` (no codex counterpart).
 - `fs/remove` takes only `path` and always removes recursively and ignores a
   missing path, matching `IHostFileSystem.remove` (codex has `recursive`/`force`).
