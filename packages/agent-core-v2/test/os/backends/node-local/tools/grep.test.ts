@@ -1,6 +1,6 @@
 import { Readable, type Writable } from 'node:stream';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
@@ -46,7 +46,8 @@ import {
 import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
+import { ensureRgPath, type RgProbe } from '#/os/backends/node-local/tools/rgLocator';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
@@ -71,6 +72,19 @@ class TestContributionAssembly extends Service {
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
 const MAX_COLUMNS_RG_ARGS = ['--max-columns', '500'] as const;
 const MTIME_RG_ARGS = ['-l', '--sortr=modified'] as const;
+const realRgProbe: RgProbe = {
+  exec: async (args) => {
+    const [command, ...rest] = args;
+    if (command === undefined) return { exitCode: -1 };
+    const proc = await new HostProcessService().spawn(command, rest);
+    proc.stdin.end();
+    proc.stdout.resume();
+    proc.stderr.resume();
+    const exitCode = await proc.wait();
+    await proc.dispose();
+    return { exitCode };
+  },
+};
 const COMMON_RG_ARGS = [
   '--null',
   '--glob',
@@ -549,33 +563,52 @@ describe('GrepTool', () => {
     expect(stat).not.toHaveBeenCalled();
   });
 
-  it('lets ripgrep order matching files newest-first', async () => {
-    const { mkdtemp, mkdir, rm, utimes, writeFile } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const dir = await mkdtemp(join(tmpdir(), 'grep-rg-sort-'));
-    try {
-      await mkdir(join(dir, 'src'));
-      for (const [name, mtime] of [['old.ts', 1_000], ['new.ts', 2_000]] as const) {
-        const file = join(dir, 'src', name);
-        await writeFile(file, 'hit\n');
-        await utimes(file, mtime, mtime);
+  describe('with real ripgrep', () => {
+    let runRealRg = false;
+
+    beforeAll(async () => {
+      try {
+        const actual = await vi.importActual<typeof import('#/os/backends/node-local/tools/rgLocator')>(
+          '#/os/backends/node-local/tools/rgLocator',
+        );
+        const resolution = await actual.ensureRgPath(realRgProbe, { allowCachedFallback: false });
+        vi.mocked(ensureRgPath).mockResolvedValue(resolution);
+        runRealRg = true;
+      } catch {
       }
-      const exec = vi.fn(async (command: string, ...args: string[]) => {
-        const { stdout, stderr } = await promisify(execFile)(command, args);
-        return processWithOutput(stdout, stderr);
-      });
-      vi.mocked(ensureRgPath).mockResolvedValueOnce({ path: 'rg', source: 'system-path' });
-      const tool = new GrepTool(createFakeKaos({ exec }), { workspaceDir: dir, additionalDirs: [] });
+    });
 
-      const result = await executeTool(tool, context({ pattern: 'hit' }));
+    beforeEach((testCtx) => {
+      if (!runRealRg) testCtx.skip();
+    });
 
-      expect(toolContentString(result)).toBe('src/new.ts\nsrc/old.ts');
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+    afterAll(() => {
+      vi.mocked(ensureRgPath).mockResolvedValue({ path: '/mock/rg', source: 'system-path' });
+    });
+
+    it('lets ripgrep order matching files newest-first', async () => {
+      const { mkdtemp, mkdir, rm, utimes, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const dir = await mkdtemp(join(tmpdir(), 'grep-rg-sort-'));
+      try {
+        await mkdir(join(dir, 'src'));
+        for (const [name, mtime] of [['old.ts', 1_000], ['new.ts', 2_000]] as const) {
+          const file = join(dir, 'src', name);
+          await writeFile(file, 'hit\n');
+          await utimes(file, mtime, mtime);
+        }
+        const processService = new HostProcessService();
+        const exec = vi.fn((command: string, ...args: string[]) => processService.spawn(command, args));
+        const tool = new GrepTool(createFakeKaos({ exec }), { workspaceDir: dir, additionalDirs: [] });
+
+        const result = await executeTool(tool, context({ pattern: 'hit' }));
+
+        expect(toolContentString(result)).toBe('src/new.ts\nsrc/old.ts');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   it('uses count-matches and ignores context flags outside content output mode', async () => {
