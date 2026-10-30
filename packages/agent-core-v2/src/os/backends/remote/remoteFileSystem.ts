@@ -1,9 +1,3 @@
-import { readTextPage } from '#/os/operations/readTextPage';
-import { EditService } from '#/os/operations/editService';
-import { TextModel } from '#/os/operations/textModel';
-import { createHash, randomUUID } from 'node:crypto';
-import { writeTextResult } from '#/os/operations/writeText';
-import { TEXT_PAGE_MAX_REMOTE_CHARS, type GitWorkTree, type FileSnapshot, type HostFileOperations } from '#/os/interface/fileOperations';
 import * as posixPath from 'node:path/posix';
 
 import {
@@ -41,15 +35,6 @@ import {
   FS_READ_DIRECTORY_MAX_ENTRIES,
   FS_READ_FILE_MAX_BYTES,
   FS_READ_FILE_METHOD,
-  FS_READ_TEXT_PAGE_METHOD,
-  FS_CANCEL_READ_METHOD,
-  FS_MAX_ACTIVE_READS,
-  FS_SNAPSHOT_FILES_METHOD,
-  FS_MATCH_FILES_METHOD,
-  FS_FIND_GIT_WORK_TREE_METHOD,
-  FS_DISCOVER_INSTRUCTIONS_METHOD,
-  FS_SNAPSHOT_MAX_FILES,
-  FS_EDIT_TEXT_METHOD,
   FS_REMOVE_METHOD,
   FS_RENAME_METHOD,
   FS_WALK_METHOD,
@@ -94,115 +79,7 @@ function isUtf8Encoding(encoding: BufferEncoding): boolean {
 export class RemoteFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
 
-  private readonly contents = new Map<string, { bytes: Uint8Array; hash: string }>();
-  private contentBytes = 0;
-  private activeReads = 0;
-
-  constructor(private readonly connection: ExecChannel) {
-    connection.onDidClose(() => {
-      this.contents.clear();
-      this.contentBytes = 0;
-    });
-  }
-
-  private rememberContent(path: string, data: Uint8Array): void {
-    const previous = this.contents.get(path);
-    if (previous !== undefined) {
-      this.contentBytes -= previous.bytes.byteLength;
-      this.contents.delete(path);
-    }
-    if (data.byteLength > 4 * 1024 * 1024) return;
-    const bytes = Uint8Array.from(data);
-    this.contents.set(path, { bytes, hash: createHash('sha256').update(bytes).digest('hex') });
-    this.contentBytes += bytes.byteLength;
-    while (this.contentBytes > 16 * 1024 * 1024 || this.contents.size > 16) {
-      const first = this.contents.entries().next().value!;
-      this.contents.delete(first[0]);
-      this.contentBytes -= first[1].bytes.byteLength;
-    }
-  }
-
-
-  readonly operations: HostFileOperations = {
-    matchFiles: (files, options, timeoutMs) => this.call(FS_MATCH_FILES_METHOD, { files, options, timeoutMs }),
-    findGitWorkTree: async (cwd) => posixPath.isAbsolute(cwd) ? (await this.call<{ workTree: GitWorkTree | null }>(FS_FIND_GIT_WORK_TREE_METHOD, { cwd })).workTree : null,
-    discoverInstructions: async (dirs, known) => {
-      const paths = new Set<string>();
-      for (let offset = 0; offset < dirs.length; offset += 64) {
-        for (const path of await this.call<string[]>(FS_DISCOVER_INSTRUCTIONS_METHOD, { dirs: dirs.slice(offset, offset + 64), known })) paths.add(path);
-      }
-      return [...paths];
-    },
-    snapshotFiles: async (files, maxFileBytes) => {
-      const results: FileSnapshot[] = [];
-      for (let offset = 0; offset < files.length; offset += FS_SNAPSHOT_MAX_FILES) {
-        const requests = files.slice(offset, offset + FS_SNAPSHOT_MAX_FILES);
-        const cached = requests.map((file) => this.contents.get(file.path));
-        const batch = await this.call<readonly (FileSnapshot & { dataBase64?: string })[]>(FS_SNAPSHOT_FILES_METHOD, {
-          files: requests.map((file, index) => ({ path: file.path, knownHash: cached[index]?.hash ?? file.knownHash })), maxFileBytes,
-        });
-        for (let index = 0; index < batch.length; index += 1) {
-          const result = batch[index]!;
-          const request = requests[index]!;
-          if (result.kind !== 'file') {
-            results.push(result);
-            continue;
-          }
-          const bytes = result.dataBase64 === undefined
-            ? cached[index]?.hash === result.contentHash ? cached[index]!.bytes : undefined
-            : decodeBase64(result.dataBase64);
-          if (bytes !== undefined) this.rememberContent(request.path, bytes);
-          results.push({ kind: 'file', contentHash: result.contentHash, bytes: request.knownHash === result.contentHash ? undefined : bytes });
-        }
-      }
-      return results;
-    },
-    writeText: (input) => writeTextResult(input, async () => {
-      const bytes = Buffer.from(input.content, 'utf8');
-      const previous = input.mode === 'append' ? this.contents.get(input.path) : undefined;
-      await this.writeChunked(input.path, bytes, input.mode === 'append' ? 'append' : 'truncate', input.parent);
-      if (input.mode === 'overwrite') this.rememberContent(input.path, bytes);
-      else if (previous !== undefined) this.rememberContent(input.path, Buffer.concat([previous.bytes, bytes]));
-    }),
-    readTextPage: async (path, options, signal) => {
-      if (signal?.aborted === true) return { isError: true, output: 'Read aborted' };
-      if (options.maxChars > TEXT_PAGE_MAX_REMOTE_CHARS || this.activeReads >= FS_MAX_ACTIVE_READS) {
-        return readTextPage({ name: path, stat: () => this.stat(path), readBytes: (n) => this.readBytes(path, n), readLines: () => this.readLines(path) }, options, signal);
-      }
-      this.activeReads += 1;
-      const readId = randomUUID();
-      const cancel = (): void => {
-        try { this.connection.notify(FS_CANCEL_READ_METHOD, { readId }); } catch {}
-      };
-      signal?.addEventListener('abort', cancel, { once: true });
-      try {
-        return await this.call(FS_READ_TEXT_PAGE_METHOD, { path, ...options, readId });
-      } catch (error) {
-        cancel();
-        return { isError: true, output: error instanceof Error ? error.message : String(error) };
-      } finally {
-        this.activeReads -= 1;
-        signal?.removeEventListener('abort', cancel);
-      }
-    },
-    editText: async (input) => {
-      const previous = this.contents.get(input.path);
-      let result: Awaited<ReturnType<HostFileOperations['editText']>>;
-      try {
-        result = await this.call(FS_EDIT_TEXT_METHOD, input);
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
-      }
-      if (result.ok && previous !== undefined) {
-        try {
-          const raw = decodeTextWithErrors(Buffer.from(previous.bytes), 'utf8', 'strict');
-          const applied = new EditService().apply(new TextModel(raw), { ...input, path: input.displayPath });
-          if (applied.ok) this.rememberContent(input.path, Buffer.from(applied.rawContent));
-        } catch {}
-      }
-      return result;
-    },
-  };
+  constructor(private readonly connection: ExecChannel) {}
 
   private async call<T>(method: string, params: unknown): Promise<T> {
     try {
@@ -216,31 +93,30 @@ export class RemoteFileSystem implements IHostFileSystem {
     return this.call<FsReadFileResult>(FS_READ_FILE_METHOD, { path, offset, maxBytes });
   }
 
+  private async writeMode(path: string, data: Uint8Array, mode: FsWriteMode, parent?: string): Promise<void> {
+    await this.call(FS_WRITE_FILE_METHOD, { path, dataBase64: encodeBase64(data), mode, parent });
+  }
+
   private async writeChunked(path: string, data: Uint8Array, mode: FsWriteMode, parent?: string): Promise<void> {
     if (data.byteLength <= FS_WRITE_FILE_CHUNK_BYTES) {
-      await this.call(FS_WRITE_FILE_METHOD, { path, dataBase64: encodeBase64(data), mode, parent });
+      await this.writeMode(path, data, mode, parent);
       return;
     }
-    const transferId = randomUUID();
-    let chunkIndex = 0;
-    for (let offset = 0; offset < data.byteLength;) {
-      const pending: Promise<unknown>[] = [];
-      for (let window = 0; window < 4 && offset < data.byteLength; window += 1) {
-        const end = Math.min(data.byteLength, offset + FS_WRITE_FILE_CHUNK_BYTES);
-        pending.push(this.call(FS_WRITE_FILE_METHOD, {
-          path,
-          dataBase64: encodeBase64(data.subarray(offset, end)),
-          mode: offset === 0 ? mode : 'append',
-          parent: offset === 0 ? parent : undefined,
-          transferId,
-          chunkIndex: chunkIndex++,
-          final: end === data.byteLength,
-        }));
-        offset = end;
-      }
-      const results = await Promise.allSettled(pending);
-      const failure = results.find((result) => result.status === 'rejected');
-      if (failure?.status === 'rejected') throw failure.reason;
+    for (let offset = 0; offset < data.byteLength; offset += FS_WRITE_FILE_CHUNK_BYTES) {
+      await this.writeMode(path, data.subarray(offset, offset + FS_WRITE_FILE_CHUNK_BYTES), offset === 0 ? mode : 'append', offset === 0 ? parent : undefined);
+    }
+  }
+
+  async readWholeFile(path: string) {
+    try {
+      const result = await this.readRange(path, 0);
+      const bytes = decodeBase64(result.dataBase64);
+      return {
+        bytes,
+        stat: { isFile: true, isDirectory: false, size: bytes.byteLength },
+      };
+    } catch {
+      return undefined;
     }
   }
 
@@ -248,13 +124,18 @@ export class RemoteFileSystem implements IHostFileSystem {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string> {
-    const bytes = await this.readBytes(path);
+    const whole = await this.readWholeFile(path);
+    const bytes = whole === undefined ? await this.readBytes(path) : whole.bytes;
     const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     return decodeTextWithErrors(buffer, options?.encoding ?? 'utf-8', options?.errors ?? 'strict');
   }
 
   async writeText(path: string, data: string): Promise<void> {
     await this.writeChunked(path, Buffer.from(data, 'utf8'), 'truncate');
+  }
+
+  async writeTextWithParent(path: string, data: string, mode: 'overwrite' | 'append', parent: string): Promise<void> {
+    await this.writeChunked(path, Buffer.from(data, 'utf8'), mode === 'append' ? 'append' : 'truncate', parent);
   }
 
   async appendText(path: string, data: string): Promise<void> {
@@ -265,7 +146,7 @@ export class RemoteFileSystem implements IHostFileSystem {
     if (n === 0) return new Uint8Array(0);
     const chunks: Uint8Array[] = [];
     let total = 0;
-    for await (const chunk of this.readChunks(path, offset, n)) {
+    for await (const chunk of this.readChunks(path, offset)) {
       const length = n === undefined ? chunk.byteLength : Math.min(chunk.byteLength, n - total);
       if (length === 0) break;
       chunks.push(chunk.subarray(0, length));
@@ -286,43 +167,25 @@ export class RemoteFileSystem implements IHostFileSystem {
       await this.writeChunked(path, data, 'truncate');
       return;
     }
-    const transferId = randomUUID();
-    let chunkIndex = 0;
+    let mode: FsWriteMode = 'truncate';
     const pending = new Uint8Array(FS_WRITE_FILE_CHUNK_BYTES);
     let pendingBytes = 0;
-    let writes: Promise<unknown>[] = [];
-    const send = (bytes: Uint8Array, final: boolean): void => {
-      writes.push(this.call(FS_WRITE_FILE_METHOD, {
-        path, dataBase64: encodeBase64(bytes), mode: chunkIndex === 0 ? 'truncate' : 'append',
-        transferId, chunkIndex: chunkIndex++, final,
-      }));
-    };
-    const flush = async (): Promise<void> => {
-      const results = await Promise.allSettled(writes);
-      writes = [];
-      const failure = results.find((result) => result.status === 'rejected');
-      if (failure?.status === 'rejected') throw failure.reason;
-    };
-    try {
-      for await (const chunk of data) {
-        let offset = 0;
-        while (offset < chunk.byteLength) {
-          const length = Math.min(pending.byteLength - pendingBytes, chunk.byteLength - offset);
-          pending.set(chunk.subarray(offset, offset + length), pendingBytes);
-          pendingBytes += length;
-          offset += length;
-          if (pendingBytes === pending.byteLength) {
-            send(pending, false);
-            pendingBytes = 0;
-            if (writes.length === 4) await flush();
-          }
+    for await (const chunk of data) {
+      let offset = 0;
+      while (offset < chunk.byteLength) {
+        const length = Math.min(pending.byteLength - pendingBytes, chunk.byteLength - offset);
+        pending.set(chunk.subarray(offset, offset + length), pendingBytes);
+        pendingBytes += length;
+        offset += length;
+        if (pendingBytes === pending.byteLength) {
+          await this.writeMode(path, pending, mode);
+          mode = 'append';
+          pendingBytes = 0;
         }
-        await flush();
       }
-      send(pending.subarray(0, pendingBytes), true);
-      await flush();
-    } finally {
-      await Promise.allSettled(writes);
+    }
+    if (pendingBytes > 0 || mode === 'truncate') {
+      await this.writeMode(path, pending.subarray(0, pendingBytes), mode);
     }
   }
 
@@ -340,15 +203,14 @@ export class RemoteFileSystem implements IHostFileSystem {
     yield* readUtf8Lines(this.readChunks(path), errors);
   }
 
-  private async *readChunks(path: string, offset = 0, remaining?: number): AsyncGenerator<Uint8Array> {
+  private async *readChunks(path: string, offset = 0): AsyncGenerator<Uint8Array> {
     for (;;) {
-      const result = await this.readRange(path, offset, Math.min(remaining ?? FS_READ_FILE_MAX_BYTES, FS_READ_FILE_MAX_BYTES));
+      const result = await this.readRange(path, offset, FS_READ_FILE_MAX_BYTES);
       if (result.dataBase64.length === 0) return;
       const chunk = decodeBase64(result.dataBase64);
       yield chunk;
       offset += chunk.byteLength;
-      if (remaining !== undefined) remaining -= chunk.byteLength;
-      if (result.eof || remaining === 0) return;
+      if (result.eof) return;
     }
   }
 

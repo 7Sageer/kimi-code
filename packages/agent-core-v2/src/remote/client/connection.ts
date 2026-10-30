@@ -16,7 +16,6 @@ import {
   MIN_EXECUTOR_VERSION,
   PING_METHOD,
   PROCESS_WRITE_METHOD,
-  FS_READ_TEXT_PAGE_METHOD,
   SERVER_NOTIFICATION_METHODS,
   type InitializeResult,
   type RemoteEnvironmentInfo,
@@ -259,7 +258,7 @@ export class RemoteExecConnection implements ExecChannel {
     }
     return new Promise<unknown>((resolve, reject) => {
       const pending: PendingCall = { resolve, reject };
-      if (method !== PROCESS_WRITE_METHOD && method !== FS_READ_TEXT_PAGE_METHOD) {
+      if (method !== PROCESS_WRITE_METHOD) {
         pending.timer = setTimeout(() => {
           this.expireRequest(id, method);
         }, this.requestCallTimeoutMs);

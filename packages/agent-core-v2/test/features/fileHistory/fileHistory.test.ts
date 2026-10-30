@@ -91,9 +91,9 @@ describe('AgentFileHistoryService', () => {
     disposables.dispose();
   });
 
-  function stubEnvironment(remoteShape = false, fs: IHostFileSystem = hostFs(remoteShape)): IAgentEnvironmentService {
+  function stubEnvironment(remoteShape = false): IAgentEnvironmentService {
     const environment = {
-      fs,
+      fs: hostFs(remoteShape),
       path: posix,
       workspace: { mapRoots: (roots: unknown) => roots },
     };
@@ -127,7 +127,7 @@ describe('AgentFileHistoryService', () => {
     });
   }
 
-  function createService(agentId = 'main', remoteShape = false, fs?: IHostFileSystem): AgentFileHistoryService {
+  function createService(agentId = 'main', remoteShape = false): AgentFileHistoryService {
     const ctx =
       agentId === scopeCtx.agentId
         ? scopeCtx
@@ -151,7 +151,7 @@ describe('AgentFileHistoryService', () => {
           executorEvents.executor,
           eventBus,
           ix.get(IEventDispatcher),
-          stubEnvironment(remoteShape, fs),
+          stubEnvironment(remoteShape),
           blobs,
           workspace,
           {
@@ -215,17 +215,6 @@ describe('AgentFileHistoryService', () => {
     const bytes = await blobs.get(scopeCtx.scope(), key);
     return bytes === undefined ? undefined : decoder.decode(bytes);
   }
-
-  it('treats a failed snapshot RPC as unreadable without recording a deletion', async () => {
-    const fs = hostFs();
-    Object.defineProperty(fs, 'operations', { value: { snapshotFiles: async () => { throw new Error('connection closed'); } } });
-    const service = createService('main', true, fs);
-    setFile('/ws/a.txt', 'original');
-    startTurn(1);
-    await fireEdit(service, '/ws/a.txt', 1);
-    expect(service.history().checkpoints).toEqual([]);
-    expect(await blobs.list(scopeCtx.scope(), 'file-history/')).toEqual([]);
-  });
 
   it('backs up pre-edit content on first touch and versions changes at the next turn boundary', async () => {
     const service = createService();

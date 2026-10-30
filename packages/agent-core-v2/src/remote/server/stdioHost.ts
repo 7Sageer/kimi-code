@@ -17,13 +17,6 @@ import {
   FS_GET_METADATA_METHOD,
   FS_READ_DIRECTORY_METHOD,
   FS_READ_FILE_METHOD,
-  FS_READ_TEXT_PAGE_METHOD,
-  FS_CANCEL_READ_METHOD,
-  FS_SNAPSHOT_FILES_METHOD,
-  FS_MATCH_FILES_METHOD,
-  FS_FIND_GIT_WORK_TREE_METHOD,
-  FS_DISCOVER_INSTRUCTIONS_METHOD,
-  FS_EDIT_TEXT_METHOD,
   FS_REMOVE_METHOD,
   FS_RENAME_METHOD,
   FS_WALK_METHOD,
@@ -35,8 +28,6 @@ import {
   PROCESS_FLOW_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_START_METHOD,
-  PROCESS_SEARCH_METHOD,
-  PROCESS_CANCEL_SEARCH_METHOD,
   PROCESS_WRITE_METHOD,
   type InitializeResult,
   type RemoteEnvironmentInfo,
@@ -44,8 +35,6 @@ import {
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 
-import { FileOperationsHandler } from './fileOperationsHandler';
-import { SearchHandler } from './searchHandler';
 import { FsHandler } from './fsHandler';
 import { ProcessManager } from './processManager';
 
@@ -63,8 +52,6 @@ type Handler = (params: unknown) => Promise<unknown>;
 
 const CONTROL_METHODS: ReadonlySet<string> = new Set([
   PING_METHOD,
-  FS_READ_TEXT_PAGE_METHOD,
-  PROCESS_SEARCH_METHOD,
   PROCESS_WRITE_METHOD,
   PROCESS_SIGNAL_METHOD,
 ]);
@@ -146,10 +133,7 @@ export class StdioHost {
   private readonly decoder = new LineFrameDecoder();
   private readonly writer: OutboundWriter;
   private readonly processManager: ProcessManager;
-  private readonly searchHandler = new SearchHandler(new HostProcessService());
-  private readonly fs = new HostFileSystem();
-  private readonly fsHandler = new FsHandler(this.fs);
-  private readonly fileOperations = new FileOperationsHandler(this.fs);
+  private readonly fsHandler = new FsHandler(new HostFileSystem());
   private readonly handlers: ReadonlyMap<string, Handler>;
   private state: 'pre-init' | 'ready' = 'pre-init';
   private inFlight = 0;
@@ -177,12 +161,6 @@ export class StdioHost {
     const pm = this.processManager;
     this.handlers = new Map<string, Handler>([
       [PING_METHOD, () => Promise.resolve({})],
-      [FS_FIND_GIT_WORK_TREE_METHOD, (p) => this.fileOperations.findGitWorkTree(p)],
-      [FS_DISCOVER_INSTRUCTIONS_METHOD, (p) => this.fileOperations.discoverInstructions(p)],
-      [FS_MATCH_FILES_METHOD, (p) => this.fileOperations.matchFiles(p)],
-      [FS_SNAPSHOT_FILES_METHOD, (p) => this.fileOperations.snapshotFiles(p)],
-      [FS_READ_TEXT_PAGE_METHOD, (p) => this.fileOperations.readTextPage(p)],
-      [FS_EDIT_TEXT_METHOD, (p) => this.fileOperations.editText(p)],
       [FS_READ_FILE_METHOD, (p) => fs.readFile(p)],
       [FS_WRITE_FILE_METHOD, (p) => fs.writeFile(p)],
       [FS_CREATE_DIRECTORY_METHOD, (p) => fs.createDirectory(p)],
@@ -192,7 +170,6 @@ export class StdioHost {
       [FS_WALK_METHOD, (p) => fs.walk(p)],
       [FS_REMOVE_METHOD, (p) => fs.remove(p)],
       [FS_RENAME_METHOD, (p) => fs.rename(p)],
-      [PROCESS_SEARCH_METHOD, (p) => this.searchHandler.search(p)],
       [PROCESS_START_METHOD, (p) => pm.start(p)],
       [PROCESS_WRITE_METHOD, (p) => pm.write(p)],
       [PROCESS_SIGNAL_METHOD, (p) => pm.signal(p)],
@@ -257,14 +234,6 @@ export class StdioHost {
     }
 
     if (isNotification(message)) {
-      if (message.method === FS_CANCEL_READ_METHOD) {
-        try { this.fileOperations.cancelRead(message.params); } catch (error) { this.violation(error); }
-        return;
-      }
-      if (message.method === PROCESS_CANCEL_SEARCH_METHOD) {
-        try { this.searchHandler.cancel(message.params); } catch (error) { this.violation(error); }
-        return;
-      }
       if (message.method === PROCESS_FLOW_METHOD) {
         this.onProcessFlow(message.params);
         return;
@@ -316,7 +285,7 @@ export class StdioHost {
       );
       return;
     }
-    const lane: Lane = message.method === FS_READ_FILE_METHOD || message.method === FS_WALK_METHOD || message.method === FS_READ_TEXT_PAGE_METHOD || message.method === FS_SNAPSHOT_FILES_METHOD || message.method === FS_MATCH_FILES_METHOD || message.method === PROCESS_SEARCH_METHOD
+    const lane: Lane = message.method === FS_READ_FILE_METHOD || message.method === FS_WALK_METHOD
       ? 'data'
       : 'control';
     if (CONTROL_METHODS.has(message.method)) {
@@ -397,8 +366,7 @@ export class StdioHost {
     this.shuttingDown = true;
     this.options.log(`shutdown: ${reason}`);
     this.waiting.length = 0;
-    this.fsHandler.dispose();
-    await Promise.all([this.processManager.terminateAll(), this.searchHandler.dispose(), this.fileOperations.dispose()]);
+    await this.processManager.terminateAll();
     this.writer.destroy();
     this.options.output.end();
     this.resolveDone();

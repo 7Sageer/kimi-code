@@ -1728,21 +1728,6 @@ describe('WorkspaceFsService.grep', () => {
     });
   });
 
-  it('keeps the legacy matches when the remote matching response is too large', async () => {
-    const hostFs = fakeFs({ 'src/a.ts': 'hello world\nfoo bar\nhello again\n' });
-    const matchFiles = vi.fn(async () => ({ files: [], files_scanned: 0, truncated: false, responseTooLarge: true }));
-    Object.defineProperty(hostFs, 'operations', { value: { matchFiles } });
-    const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 1 }), [], 'ssh-dev', '/home/target', hostFs);
-    const result = await fs.grep({ pattern: 'hello', regex: false, case_sensitive: true, follow_gitignore: false, max_files: 200, max_matches_per_file: 50, max_total_matches: 5000, context_lines: 0 });
-    expect(matchFiles).toHaveBeenCalledOnce();
-    expect(result.files_scanned).toBe(1);
-    expect(result.truncated).toBe(false);
-    expect(result.files).toEqual([{ path: 'src/a.ts', matches: [
-      { line: 1, col: 1, text: 'hello world', before: [], after: [] },
-      { line: 3, col: 1, text: 'hello again', before: [], after: [] },
-    ] }]);
-  });
-
   it('uses rg when available and parses its JSON output', async () => {
     const rgJson = [
       JSON.stringify({ type: 'begin', data: { path: { text: 'src/a.ts' } } }),

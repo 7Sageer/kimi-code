@@ -1,6 +1,3 @@
-import { searchGlob } from '#/os/operations/searchGlob';
-import { searchGrep } from '#/os/operations/searchGrep';
-import type { SearchRequest, SearchResult } from '#/os/interface/searchOperations';
 import { randomUUID } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
 
@@ -23,10 +20,6 @@ import {
   PROCESS_OUTPUT_METHOD,
   PROCESS_SIGNAL_METHOD,
   PROCESS_START_METHOD,
-  PROCESS_SEARCH_METHOD,
-  PROCESS_CANCEL_SEARCH_METHOD,
-  PROCESS_MAX_ACTIVE_SEARCHES,
-  PROCESS_SEARCH_MAX_ROOTS,
   PROCESS_WRITE_METHOD,
   type ProcessClosedNotification,
   type ProcessExitedNotification,
@@ -240,7 +233,6 @@ export class RemoteProcessService implements IHostProcessService {
   declare readonly _serviceBrand: undefined;
 
   private readonly processes = new Map<string, RemoteProcess>();
-  private activeSearches = 0;
 
   constructor(
     private readonly connection: ExecChannel,
@@ -269,28 +261,6 @@ export class RemoteProcessService implements IHostProcessService {
         proc.onConnectionClose();
       }
     });
-  }
-
-  async search(request: SearchRequest, signal: AbortSignal): Promise<SearchResult> {
-    if (signal.aborted) return { isError: true, output: request.kind === 'glob' ? 'Glob aborted' : 'Grep aborted' };
-    if (request.roots.length > PROCESS_SEARCH_MAX_ROOTS || this.activeSearches >= PROCESS_MAX_ACTIVE_SEARCHES) {
-      return request.kind === 'glob' ? searchGlob(this, request, signal) : searchGrep(this, request, signal);
-    }
-    this.activeSearches += 1;
-    const searchId = randomUUID();
-    const cancel = (): void => {
-      try { this.connection.notify(PROCESS_CANCEL_SEARCH_METHOD, { searchId }); } catch {}
-    };
-    signal.addEventListener('abort', cancel, { once: true });
-    try {
-      return await this.connection.call(PROCESS_SEARCH_METHOD, { ...request, searchId }) as SearchResult;
-    } catch (error) {
-      cancel();
-      throw toRemoteProcessError(error);
-    } finally {
-      this.activeSearches -= 1;
-      signal.removeEventListener('abort', cancel);
-    }
   }
 
   async spawn(

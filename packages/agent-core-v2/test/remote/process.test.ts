@@ -1,8 +1,5 @@
-import type { SearchRequest } from '#/os/interface/searchOperations';
-import { searchGrep } from '#/os/operations/searchGrep';
-import { searchGlob } from '#/os/operations/searchGlob';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -564,98 +561,5 @@ describe('finished process-group ownership', () => {
       await vi.advanceTimersByTimeAsync(5_000);
       expect(internals.exitedGroups.size).toBe(0);
     } finally { manager.dispose(); kill.mockRestore(); vi.useRealTimers(); }
-  });
-});
-
-describe('search processing on the execution host', () => {
-  let directory: string;
-  let connection: RemoteExecConnection;
-  let processes: RemoteProcessService;
-  let loopback: Awaited<ReturnType<typeof connectInProcess>>['loopback'];
-
-  beforeAll(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'remote-search-'));
-    ({ connection, loopback } = await connectInProcess());
-    processes = new RemoteProcessService(connection, directory, '/bin/bash');
-  });
-
-  afterAll(async () => {
-    connection.close();
-    await loopback.host.done;
-    await rm(directory, { recursive: true, force: true });
-  });
-
-  it.each(['grep', 'glob'] as const)('returns only the selected %s page and exact total over one RPC', async (kind) => {
-    const script = join(directory, `large-${kind}`);
-    const separator = kind === 'grep' ? '\0' : '\n';
-    const program = `#!/usr/bin/env node\nprocess.stdout.write(Array.from({length:50000},(_,i)=>${JSON.stringify(directory + '/')}+'file-'+i+'.txt'+${JSON.stringify(separator)}).join(''));`;
-    await writeFile(script, program, { mode: 0o755 });
-    const request: SearchRequest = { kind, args: { pattern: '*', head_limit: 3, offset: 2 }, rgPath: script, roots: [directory], workspaceDir: directory, pathClass: 'posix' };
-    const calls = vi.spyOn(connection, 'call');
-    let receivedBytes = 0;
-    const receive = (chunk: Buffer): void => { receivedBytes += chunk.byteLength; };
-    loopback.serverOutput.on('data', receive);
-    try {
-      const remote = await processes.search(request, new AbortController().signal);
-      const local = await (kind === 'grep' ? searchGrep : searchGlob)(new HostProcessService(), request, new AbortController().signal);
-      expect(remote).toEqual(local);
-      expect(remote.output).toContain('50000');
-      expect(remote.output).toContain('file-2.txt');
-      expect(remote.output).toContain('file-4.txt');
-      expect(remote.output).not.toContain('file-5.txt');
-      expect(receivedBytes).toBeLessThan(2048);
-      expect(calls.mock.calls.map(([method]) => method)).toEqual(['process/search']);
-    } finally {
-      calls.mockRestore();
-      loopback.serverOutput.off('data', receive);
-    }
-  });
-
-  it.each(['content', 'count_matches', 'files_with_matches'] as const)('preserves real ripgrep %s output including filtering and counts', async (output_mode) => {
-    const file = join(directory, 'sample.txt');
-    await writeFile(file, 'before\nmatch here\nafter\nmatch again\n');
-    const request: SearchRequest = { kind: 'grep', args: { pattern: 'match', output_mode, '-C': 1, head_limit: 2 }, rgPath: 'rg', roots: [file], workspaceDir: directory, pathClass: 'posix' };
-    const signal = new AbortController().signal;
-    expect(await processes.search(request, signal)).toEqual(await searchGrep(new HostProcessService(), request, signal));
-  });
-
-  it('keeps search working with more roots than fit the remote operation', async () => {
-    const script = join(directory, 'many-roots');
-    await writeFile(script, `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(directory + '/found.txt\0')});`, { mode: 0o755 });
-    const request: SearchRequest = { kind: 'grep', args: { pattern: 'match' }, rgPath: script, roots: Array.from({ length: 65 }, () => directory), workspaceDir: directory, pathClass: 'posix' };
-    const calls = vi.spyOn(connection, 'call');
-    try {
-      const result = await processes.search(request, new AbortController().signal);
-      expect(result.isError).not.toBe(true);
-      expect(result.output).toContain('found.txt');
-      expect(calls.mock.calls.some(([method]) => method === 'process/search')).toBe(false);
-      expect(calls.mock.calls.some(([method]) => method === 'process/start')).toBe(true);
-    } finally { calls.mockRestore(); }
-  });
-
-  it('keeps concurrent searches working above the executor search limit', async () => {
-    const script = join(directory, 'concurrent-search');
-    await writeFile(script, `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(directory + '/found.txt\0')});`, { mode: 0o755 });
-    const request: SearchRequest = { kind: 'grep', args: { pattern: 'match' }, rgPath: script, roots: [directory], workspaceDir: directory, pathClass: 'posix' };
-    const calls = vi.spyOn(connection, 'call');
-    try {
-      const results = await Promise.all(Array.from({ length: 12 }, () => processes.search(request, new AbortController().signal)));
-      expect(results.every((result) => !result.isError && result.output.includes('found.txt'))).toBe(true);
-      expect(calls.mock.calls.filter(([method]) => method === 'process/search')).toHaveLength(8);
-      expect(calls.mock.calls.some(([method]) => method === 'process/start')).toBe(true);
-    } finally { calls.mockRestore(); }
-  });
-
-  it('cancels and reaps a running search without streaming output to the controller', async () => {
-    const script = join(directory, 'slow-search');
-    const pidFile = join(directory, 'search.pid');
-    await writeFile(script, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000);`, { mode: 0o755 });
-    const controller = new AbortController();
-    const pending = processes.search({ kind: 'grep', args: { pattern: 'match' }, rgPath: script, roots: [directory], workspaceDir: directory, pathClass: 'posix' }, controller.signal);
-    let pid: number | undefined;
-    await vi.waitFor(async () => { pid = Number(await readFile(pidFile, 'utf8')); }, { timeout: 5000 });
-    controller.abort();
-    expect(await pending).toEqual({ isError: true, output: 'Grep aborted' });
-    await waitForDeath(pid!);
   });
 });

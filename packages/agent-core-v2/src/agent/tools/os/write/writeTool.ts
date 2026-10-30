@@ -1,7 +1,7 @@
 import { dirname } from 'pathe';
 
-import { type IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { writeText } from '#/os/operations/writeText';
+import { type HostFileStat, type IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
@@ -105,10 +105,60 @@ export class WriteTool implements IWriteTool {
   }
 
   private async execution(fs: IHostFileSystem, args: WriteInput, safePath: string, parent = dirname(safePath)): Promise<ExecutableToolResult> {
-    const input = { path: safePath, displayPath: args.path, parent, content: args.content, mode: args.mode ?? 'overwrite' as const };
-    return fs.operations === undefined ? writeText(fs, input) : fs.operations.writeText(input);
+    const mode = args.mode ?? 'overwrite';
+    if (fs.writeTextWithParent === undefined) {
+      const parentError = await this.ensureParentDirectory(fs, parent);
+      if (parentError !== undefined) {
+        return { isError: true, output: parentError };
+      }
+    }
+
+    try {
+      if (fs.writeTextWithParent !== undefined) {
+        await fs.writeTextWithParent(safePath, args.content, mode, parent);
+      } else if (mode === 'append') {
+        await fs.appendText(safePath, args.content);
+      } else {
+        await fs.writeText(safePath, args.content);
+      }
+      const bytesWritten = Buffer.byteLength(args.content, 'utf8');
+      return {
+        output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
+      };
+    } catch (error) {
+      if (isHostFsNotFound(error)) {
+        return {
+          isError: true,
+          output: `Failed to write ${args.path}: parent directory does not exist.`,
+        };
+      }
+      return {
+        isError: true,
+        output: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
+  private async ensureParentDirectory(fs: IHostFileSystem, parent: string): Promise<string | undefined> {
+    let stat: HostFileStat;
+    try {
+      stat = await fs.stat(parent);
+    } catch (error) {
+      if (isHostFsNotFound(error)) {
+        try {
+          await fs.mkdir(parent, { recursive: true });
+          return undefined;
+        } catch (mkdirError) {
+          return mkdirError instanceof Error ? mkdirError.message : String(mkdirError);
+        }
+      }
+      return undefined;
+    }
+    if (!stat.isDirectory) {
+      return `Parent path is not a directory: ${parent}.`;
+    }
+    return undefined;
+  }
 }
 
 registerAgentToolService(IWriteTool, WriteTool, {

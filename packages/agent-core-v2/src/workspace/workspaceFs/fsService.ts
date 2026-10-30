@@ -1,4 +1,3 @@
-import { matchFiles } from '#/os/operations/matchFiles';
 import {
   type FsDiffRequest,
   type FsDiffResponse,
@@ -1261,7 +1260,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     signal: AbortSignal,
     startedAt: number,
   ): Promise<FsGrepResponse> {
-    compileGrepPattern(req);
+    const re = compileGrepPattern(req);
 
     const files: FsGrepFileHit[] = [];
     let filesScanned = 0;
@@ -1293,25 +1292,49 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
     }
 
-    for (let offset = 0; offset < filePaths.length; offset += 128) {
-      const expired = signal.aborted || Date.now() >= deadline;
-      if ((expired && filesScanned > 0) || filesScanned >= req.max_files) {
+    for (const file of filePaths) {
+      if ((signal.aborted || Date.now() >= deadline) && filesScanned > 0) {
         truncated = true;
         break;
       }
-      const options = { ...req, max_files: req.max_files - filesScanned, max_total_matches: req.max_total_matches - totalMatches };
-      const batch = filePaths.slice(offset, offset + (expired ? 1 : 128));
-      truncated ||= expired;
-      const remainingMs = Math.max(1, deadline - Date.now());
-      let result = this.hostFs.operations === undefined
-        ? await matchFiles(this.hostFs, batch, options, remainingMs, signal)
-        : await this.hostFs.operations.matchFiles(batch, options, remainingMs);
-      if (result.responseTooLarge) result = await matchFiles(this.hostFs, batch, options, Math.max(1, deadline - Date.now()), signal);
-      files.push(...result.files);
-      filesScanned += result.files_scanned;
-      totalMatches += result.files.reduce((sum, file) => sum + file.matches.length, 0);
-      truncated ||= result.truncated;
-      if (result.truncated || totalMatches >= req.max_total_matches) break;
+      if (filesScanned >= req.max_files) {
+        truncated = true;
+        break;
+      }
+      filesScanned += 1;
+      let content: string;
+      try {
+        content = await this.hostFs.readText(file.absolute);
+      } catch {
+        continue;
+      }
+      const lines = content.split(/\r?\n/);
+      const matches: FsGrepMatch[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        re.lastIndex = 0;
+        const m = re.exec(line);
+        if (m === null) continue;
+        if (matches.length >= req.max_matches_per_file) break;
+        const before: string[] = [];
+        for (let k = Math.max(0, i - req.context_lines); k < i; k++) {
+          before.push(lines[k] ?? '');
+        }
+        const after: string[] = [];
+        for (let k = i + 1; k < Math.min(lines.length, i + 1 + req.context_lines); k++) {
+          after.push(lines[k] ?? '');
+        }
+        matches.push({ line: i + 1, col: m.index + 1, text: line, before, after });
+        totalMatches += 1;
+        if (totalMatches >= req.max_total_matches) {
+          truncated = true;
+          break;
+        }
+      }
+      if (matches.length > 0) {
+        files.push({ path: file.path, matches });
+      }
+      if (totalMatches >= req.max_total_matches) break;
     }
 
     return { files, files_scanned: filesScanned, truncated, elapsed_ms: Date.now() - startedAt };

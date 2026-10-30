@@ -1,5 +1,4 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { HostFileOperations } from './fileOperations';
 import type { TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 export interface HostFileStat {
@@ -10,6 +9,11 @@ export interface HostFileStat {
   readonly mtimeMs?: number;
   readonly ino?: number;
   readonly mode?: number;
+}
+
+export interface HostWholeFile {
+  readonly stat: HostFileStat;
+  readonly bytes: Uint8Array;
 }
 
 export interface HostDirEntry {
@@ -43,13 +47,13 @@ export interface HostWalkResult {
 export interface IHostFileSystem {
   readonly _serviceBrand: undefined;
 
-  readonly operations?: HostFileOperations;
-
   readText(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string>;
+  readWholeFile?(path: string): Promise<HostWholeFile | undefined>;
   writeText(path: string, data: string): Promise<void>;
+  writeTextWithParent?(path: string, data: string, mode: 'overwrite' | 'append', parent: string): Promise<void>;
   appendText(path: string, data: string): Promise<void>;
   readBytes(path: string, n?: number, offset?: number): Promise<Uint8Array>;
   writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;

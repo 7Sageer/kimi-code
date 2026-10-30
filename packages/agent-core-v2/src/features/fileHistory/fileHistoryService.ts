@@ -1,4 +1,3 @@
-import { snapshotFiles } from '#/os/operations/snapshotFiles';
 import { createHash } from 'node:crypto';
 
 import { Service } from '#/_base/di/service';
@@ -11,6 +10,7 @@ import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
@@ -48,8 +48,6 @@ import { touchFileHistorySession } from './fileHistoryRetention';
 
 export const FILE_HISTORY_MAX_FILE_BYTES = 4 * 1024 * 1024;
 export { FILE_HISTORY_BLOB_PREFIX } from './fileHistory';
-
-type CurrentFile = Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number };
 
 export class AgentFileHistoryService extends Service implements IAgentFileHistoryService {
   declare readonly _serviceBrand: undefined;
@@ -301,9 +299,9 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     );
     if (startCheckpoint !== undefined && Object.hasOwn(startCheckpoint.entries, pathKey)) return;
 
-    const latest = latestEntry(state.checkpoints, pathKey);
-    const current = await this.readCurrent(pathKey, latest);
+    const current = await this.readCurrent(pathKey);
     if (current === 'unreadable') return;
+    const latest = latestEntry(state.checkpoints, pathKey);
     const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
     let entry: FileBackupEntry;
     if (current === 'missing') {
@@ -358,40 +356,35 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       string,
       FileBackupEntry
     >;
-    const tracked = Object.entries(start.entries);
-    for (let offset = 0; offset < tracked.length; offset += 4) {
-      const batch = tracked.slice(offset, offset + 4);
-      const currentFiles = await this.readCurrents(batch.map(([pathKey, previous]) => ({ pathKey, previous })));
-      for (const [pathKey, before] of batch) {
-        const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
-        const current = currentFiles.get(pathKey) ?? 'unreadable';
-        if (current === 'unreadable') continue;
-        if (current === 'missing') {
-          if (before.key !== null || before.oversize === true) {
-            entries[pathKey] = { key: null, version: nextVersion };
-          }
-          continue;
+    for (const [pathKey, before] of Object.entries(start.entries)) {
+      const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
+      const current = await this.readCurrent(pathKey);
+      if (current === 'unreadable') continue;
+      if (current === 'missing') {
+        if (before.key !== null || before.oversize === true) {
+          entries[pathKey] = { key: null, version: nextVersion };
         }
-        if (!(current instanceof Uint8Array)) {
-          if (
-            before.oversize !== true ||
-            before.size !== current.oversizeBytes ||
-            before.mtimeMs !== current.mtimeMs
-          ) {
-            entries[pathKey] = {
-              key: null,
-              version: nextVersion,
-              oversize: true,
-              size: current.oversizeBytes,
-              mtimeMs: current.mtimeMs,
-            };
-          }
-          continue;
-        }
-        const contentHash = sha256(current);
-        if (before.contentHash === contentHash) continue;
-        entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash);
+        continue;
       }
+      if (!(current instanceof Uint8Array)) {
+        if (
+          before.oversize !== true ||
+          before.size !== current.oversizeBytes ||
+          before.mtimeMs !== current.mtimeMs
+        ) {
+          entries[pathKey] = {
+            key: null,
+            version: nextVersion,
+            oversize: true,
+            size: current.oversizeBytes,
+            mtimeMs: current.mtimeMs,
+          };
+        }
+        continue;
+      }
+      const contentHash = sha256(current);
+      if (before.contentHash === contentHash) continue;
+      entries[pathKey] = await this.backup(pathKey, nextVersion, current, contentHash);
     }
 
     const evictable = displacedCheckpoints(state.checkpoints, turnId);
@@ -471,44 +464,48 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     return this.blobs.get(this.agentCtx.scope(), entry.key);
   }
 
-  private async readCurrent(pathKey: string, previous?: FileBackupEntry): Promise<CurrentFile> {
-    return (await this.readCurrents([{ pathKey, previous }])).get(pathKey) ?? 'unreadable';
-  }
-
-  private async readCurrents(files: readonly { pathKey: string; previous?: FileBackupEntry }[]): Promise<Map<string, CurrentFile>> {
-    const results = new Map<string, CurrentFile>();
+  private async readCurrent(
+    pathKey: string,
+  ): Promise<
+    Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number }
+  > {
     let lease: EnvironmentLease;
     try {
       lease = this.environment.acquire(['fs']);
     } catch (error) {
-      if (error instanceof EnvironmentError) return results;
+      if (error instanceof EnvironmentError) return 'unreadable';
       throw error;
     }
     try {
       const fs = lease.environment.fs;
+      if (fs === undefined) return 'unreadable';
       const path = lease.environment.path;
-      if (fs === undefined || path === undefined) return results;
-      for (let offset = 0; offset < files.length; offset += 4) {
-        const batch = files.slice(offset, offset + 4);
-        const known = await Promise.all(batch.map((file) => this.entryBytes(file.previous)));
-        const requests = batch.map((file, index) => ({
-          path: resolveWorkspacePath(path, this.workspaceCtx.workDir, file.pathKey),
-          knownHash: known[index] === undefined ? undefined : file.previous?.contentHash,
-        }));
-        const snapshots = await (fs.operations === undefined
-          ? snapshotFiles(fs, requests, FILE_HISTORY_MAX_FILE_BYTES)
-          : fs.operations.snapshotFiles(requests, FILE_HISTORY_MAX_FILE_BYTES)).catch(() => []);
-        for (let index = 0; index < batch.length; index += 1) {
-          const snapshot = snapshots[index];
-          const current = snapshot?.kind === 'file'
-            ? snapshot.bytes ?? known[index] ?? 'unreadable'
-            : snapshot?.kind === 'oversize'
-              ? { oversizeBytes: snapshot.size, mtimeMs: snapshot.mtimeMs }
-              : snapshot?.kind ?? 'unreadable';
-          results.set(batch[index]!.pathKey, current);
-        }
+      if (path === undefined) return 'unreadable';
+      const absolute = resolveWorkspacePath(path, this.workspaceCtx.workDir, pathKey);
+      let info;
+      try {
+        info = await fs.stat(absolute);
+      } catch (error) {
+        return isHostFsNotFound(error) ? 'missing' : 'unreadable';
       }
-      return results;
+      if (!info.isFile) return 'unreadable';
+      if (info.size > FILE_HISTORY_MAX_FILE_BYTES) {
+        return { oversizeBytes: info.size, mtimeMs: info.mtimeMs };
+      }
+      try {
+        const bytes = await fs.readBytes(absolute, info.size + 1);
+        if (bytes.byteLength > FILE_HISTORY_MAX_FILE_BYTES) {
+          const grown = await fs.stat(absolute).catch(() => undefined);
+          return {
+            oversizeBytes: grown?.size ?? bytes.byteLength,
+            mtimeMs: grown?.mtimeMs,
+          };
+        }
+        if (bytes.byteLength !== info.size) return 'unreadable';
+        return bytes;
+      } catch {
+        return 'unreadable';
+      }
     } finally {
       lease.dispose();
     }

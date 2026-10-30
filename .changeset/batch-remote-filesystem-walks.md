@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Reduce latency for file operations and searches in remote environments.
+Speed up remote file reads, edits, writes, search, and completion.

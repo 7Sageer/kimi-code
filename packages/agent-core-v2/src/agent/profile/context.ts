@@ -1,12 +1,9 @@
-import { AGENTS_MD_PLAIN_NAMES, dotKimiAgentsMdPath, dirsRootToLeaf } from '#/os/operations/instructions';
-import { basename, join, normalize } from 'pathe';
+import { basename, dirname, join, normalize } from 'pathe';
 
 import { findGitWorkTree } from '#/app/git/workTree';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SystemPromptContext } from './profile';
-
-export { AGENTS_MD_PLAIN_NAMES, dotKimiAgentsMdPath, agentsMdCandidatePaths, dirsRootToLeaf, findAgentsMdInDir } from '#/os/operations/instructions';
 
 export const AGENTS_MD_RECOMMENDED_MAX_BYTES = 32 * 1024;
 
@@ -103,6 +100,16 @@ export function splitAgentsMdFiles(
   return files;
 }
 
+export const AGENTS_MD_PLAIN_NAMES = ['AGENTS.md', 'agents.md'] as const;
+
+export function dotKimiAgentsMdPath(dir: string): string {
+  return join(dir, '.kimi-code', 'AGENTS.md');
+}
+
+export function agentsMdCandidatePaths(dir: string): string[] {
+  return [dotKimiAgentsMdPath(dir), ...AGENTS_MD_PLAIN_NAMES.map((name) => join(dir, name))];
+}
+
 export function extractAgentsMdPathsFromSystemPrompt(systemPrompt: string): string[] {
   const paths: string[] = [];
   const seen = new Set<string>();
@@ -120,6 +127,35 @@ export function extractAgentsMdPathsFromSystemPrompt(systemPrompt: string): stri
     paths.push(normalized);
   }
   return paths;
+}
+
+export async function findAgentsMdInDir(
+  deps: { readonly fs: IHostFileSystem },
+  dir: string,
+): Promise<string[]> {
+  const found: string[] = [];
+  const dotKimi = dotKimiAgentsMdPath(dir);
+  if (await isNonEmptyFile(deps, dotKimi)) found.push(dotKimi);
+  for (const fileName of AGENTS_MD_PLAIN_NAMES) {
+    const candidate = join(dir, fileName);
+    if (await isNonEmptyFile(deps, candidate)) {
+      found.push(candidate);
+      break;
+    }
+  }
+  return found;
+}
+
+async function isNonEmptyFile(
+  deps: { readonly fs: IHostFileSystem },
+  path: string,
+): Promise<boolean> {
+  try {
+    const content = await deps.fs.readText(path, { errors: 'ignore' });
+    return content.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function loadAgentsMdForRoots(
@@ -239,6 +275,21 @@ export async function findProjectRoot(
 ): Promise<string> {
   const rootWorkDir = normalize(workDir);
   return (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
+}
+
+export function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
+  const dirs: string[] = [];
+  let current = normalize(workDir);
+
+  while (true) {
+    dirs.push(current);
+    if (current === projectRoot) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return dirs.toReversed();
 }
 
 interface AgentFile {

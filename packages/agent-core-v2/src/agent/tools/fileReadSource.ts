@@ -1,11 +1,17 @@
-import type { FileReadSource } from '#/os/interface/fileOperations';
 import { readUtf8Lines } from '#/_base/execEnv/decodeText';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostFileStat, HostWholeFile, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
-export type { FileReadSource } from '#/os/interface/fileOperations';
+export interface FileReadSource {
+  readonly name: string;
+  readonly localPath?: string;
+  stat(): Promise<HostFileStat>;
+  readWholeFile?(): Promise<HostWholeFile | undefined>;
+  readBytes(n?: number): Promise<Uint8Array>;
+  readLines(): AsyncIterable<string>;
+}
 
 export function withAttachmentLocation(result: ExecutableToolResult, source: FileReadSource): ExecutableToolResult {
   if (!result.isError || source.localPath === undefined || typeof result.output !== 'string') return result;
@@ -15,8 +21,8 @@ export function withAttachmentLocation(result: ExecutableToolResult, source: Fil
 export function environmentFileSource(fs: IHostFileSystem, path: string): FileReadSource {
   return {
     name: path,
-    readTextPage: fs.operations === undefined ? undefined : (options, signal) => fs.operations!.readTextPage(path, options, signal),
     stat: () => fs.stat(path),
+    readWholeFile: fs.readWholeFile === undefined ? undefined : () => fs.readWholeFile!(path),
     readBytes: (n) => fs.readBytes(path, n),
     readLines: () => fs.readLines(path, { errors: 'strict' }),
   };
