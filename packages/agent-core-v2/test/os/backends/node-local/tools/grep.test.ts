@@ -70,6 +70,7 @@ class TestContributionAssembly extends Service {
 }
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
 const MAX_COLUMNS_RG_ARGS = ['--max-columns', '500'] as const;
+const MTIME_RG_ARGS = ['-l', '--sortr=modified'] as const;
 const COMMON_RG_ARGS = [
   '--null',
   '--glob',
@@ -220,15 +221,6 @@ function processWithOutput(stdout: string, stderr = '', exitCode = 0): IHostProc
       stdoutStream.destroy();
       stderrStream.destroy();
     }),
-  };
-}
-
-function statResult(mtime: number): HostFileStat {
-  return {
-    isFile: true,
-    isDirectory: false,
-    size: 0,
-    mtimeMs: mtime * 1000,
   };
 }
 
@@ -469,7 +461,7 @@ describe('GrepTool', () => {
     expect(exec).toHaveBeenCalledWith(
       '/mock/rg',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...MTIME_RG_ARGS,
       ...SENSITIVE_RG_ARGS,
       '--',
       'hit',
@@ -487,7 +479,7 @@ describe('GrepTool', () => {
     expect(exec).toHaveBeenCalledWith(
       '/mock/rg',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...MTIME_RG_ARGS,
       ...SENSITIVE_RG_ARGS,
       '--',
       'hit',
@@ -525,17 +517,14 @@ describe('GrepTool', () => {
     expect(result.output).toBe('No non-sensitive matches found');
   });
 
-  it('sorts files_with_matches by mtime before pagination after sensitive filtering', async () => {
-    const stdout = ['/workspace/src/old.ts', '/workspace/.env', '/workspace/src/new.ts', ''].join(
+  it('uses ripgrep mtime order without stat calls before pagination after sensitive filtering', async () => {
+    const stdout = ['/workspace/src/new.ts', '/workspace/.env', '/workspace/src/old.ts', ''].join(
       '\n',
     );
-    const stat = vi.fn(async (path: string) => {
-      if (path === '/workspace/src/new.ts') return statResult(10);
-      if (path === '/workspace/src/old.ts') return statResult(1);
-      throw new Error(`unexpected stat: ${path}`);
-    });
+    const exec = vi.fn().mockResolvedValue(processWithOutput(stdout));
+    const stat = vi.fn();
     const tool = new GrepTool(
-      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)), stat }),
+      createFakeKaos({ exec, stat }),
       { workspaceDir: '/workspace', additionalDirs: [] },
     );
 
@@ -548,122 +537,45 @@ describe('GrepTool', () => {
         'Results truncated to 1 lines (total: 2). Use offset=1 to see more.',
       ].join('\n'),
     );
-    expect(stat).toHaveBeenCalledTimes(2);
-    expect(stat).toHaveBeenCalledWith('/workspace/src/old.ts');
-    expect(stat).toHaveBeenCalledWith('/workspace/src/new.ts');
+    expect(exec).toHaveBeenCalledWith(
+      '/mock/rg',
+      ...DEFAULT_RG_ARGS,
+      ...MTIME_RG_ARGS,
+      ...SENSITIVE_RG_ARGS,
+      '--',
+      'hit',
+      '/workspace',
+    );
+    expect(stat).not.toHaveBeenCalled();
   });
 
-  it('keeps v1 tie order for files modified within the same second', async () => {
-    const stdout = ['/workspace/src/a.ts', '/workspace/src/b.ts', '/workspace/src/c.ts', ''].join(
-      '\n',
-    );
-    const stat = vi.fn(async (path: string) => {
-      if (path === '/workspace/src/a.ts') {
-        return { ...statResult(1), mtimeMs: 1000 };
+  it('lets ripgrep order matching files newest-first', async () => {
+    const { mkdtemp, mkdir, rm, utimes, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const dir = await mkdtemp(join(tmpdir(), 'grep-rg-sort-'));
+    try {
+      await mkdir(join(dir, 'src'));
+      for (const [name, mtime] of [['old.ts', 1_000], ['new.ts', 2_000]] as const) {
+        const file = join(dir, 'src', name);
+        await writeFile(file, 'hit\n');
+        await utimes(file, mtime, mtime);
       }
-      if (path === '/workspace/src/b.ts') {
-        return { ...statResult(1), mtimeMs: 1500 };
-      }
-      if (path === '/workspace/src/c.ts') {
-        return { ...statResult(2), mtimeMs: 2000 };
-      }
-      throw new Error(`unexpected stat: ${path}`);
-    });
-    const tool = new GrepTool(
-      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)), stat }),
-      { workspaceDir: '/workspace', additionalDirs: [] },
-    );
-
-    const result = await executeTool(tool, context({ pattern: 'hit', head_limit: 0 }));
-
-    expect(toolContentString(result)).toBe(['src/c.ts', 'src/a.ts', 'src/b.ts'].join('\n'));
-  });
-
-  it('limits concurrent mtime stats while sorting files_with_matches', async () => {
-    const filePaths = Array.from(
-      { length: 40 },
-      (_, index) => `/workspace/src/file-${String(index).padStart(2, '0')}.ts`,
-    );
-    let activeStats = 0;
-    let maxActiveStats = 0;
-    const stat = vi.fn(async (path: string) => {
-      activeStats += 1;
-      maxActiveStats = Math.max(maxActiveStats, activeStats);
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
+      const exec = vi.fn(async (command: string, ...args: string[]) => {
+        const { stdout, stderr } = await promisify(execFile)(command, args);
+        return processWithOutput(stdout, stderr);
       });
-      activeStats -= 1;
-      const mtime = Number(path.match(/file-(\d+)\.ts$/)?.[1] ?? 0);
-      return statResult(mtime);
-    });
-    const tool = new GrepTool(
-      createFakeKaos({
-        exec: vi.fn().mockResolvedValue(processWithOutput(`${filePaths.join('\n')}\n`)),
-        stat,
-      }),
-      { workspaceDir: '/workspace', additionalDirs: [] },
-    );
+      vi.mocked(ensureRgPath).mockResolvedValueOnce({ path: 'rg', source: 'system-path' });
+      const tool = new GrepTool(createFakeKaos({ exec }), { workspaceDir: dir, additionalDirs: [] });
 
-    const result = await executeTool(tool, context({ pattern: 'hit', head_limit: 0 }));
-    const lines = toolContentString(result).split('\n');
+      const result = await executeTool(tool, context({ pattern: 'hit' }));
 
-    expect(stat).toHaveBeenCalledTimes(filePaths.length);
-    expect(maxActiveStats).toBeLessThanOrEqual(32);
-    expect(lines.at(0)).toBe('src/file-39.ts');
-    expect(lines.at(-1)).toBe('src/file-00.ts');
-  });
-
-  it('stops scheduling mtime stats when aborted during files_with_matches sorting', async () => {
-    const filePaths = Array.from(
-      { length: 40 },
-      (_, index) => `/workspace/src/file-${String(index).padStart(2, '0')}.ts`,
-    );
-    const abortController = new AbortController();
-    const stat = vi.fn(async () => {
-      abortController.abort();
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
-      });
-      return statResult(1);
-    });
-    const tool = new GrepTool(
-      createFakeKaos({
-        exec: vi.fn().mockResolvedValue(processWithOutput(`${filePaths.join('\n')}\n`)),
-        stat,
-      }),
-      { workspaceDir: '/workspace', additionalDirs: [] },
-    );
-
-    const result = await executeTool(tool,
-      context({ pattern: 'hit', head_limit: 0 }, abortController.signal),
-    );
-
-    expect(result).toMatchObject({ isError: true, output: 'Grep aborted' });
-    expect(stat.mock.calls.length).toBeLessThan(filePaths.length);
-  });
-
-  it('keeps files_with_matches entries when mtime stat fails', async () => {
-    const stdout = [
-      '/workspace/src/old.ts',
-      '/workspace/src/missing.ts',
-      '/workspace/src/new.ts',
-      '',
-    ].join('\n');
-    const stat = vi.fn(async (path: string) => {
-      if (path === '/workspace/src/new.ts') return statResult(10);
-      if (path === '/workspace/src/old.ts') return statResult(1);
-      throw new Error('stat failed');
-    });
-    const tool = new GrepTool(
-      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)), stat }),
-      { workspaceDir: '/workspace', additionalDirs: [] },
-    );
-
-    const result = await executeTool(tool, context({ pattern: 'hit', head_limit: 0 }));
-
-    expect(toolContentString(result)).toBe(
-      ['src/new.ts', 'src/old.ts', 'src/missing.ts'].join('\n'),
-    );
+      expect(toolContentString(result)).toBe('src/new.ts\nsrc/old.ts');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('uses count-matches and ignores context flags outside content output mode', async () => {
@@ -706,7 +618,7 @@ describe('GrepTool', () => {
       '-j',
       '1',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...MTIME_RG_ARGS,
       ...SENSITIVE_RG_ARGS,
       '--',
       'hit',
@@ -731,7 +643,7 @@ describe('GrepTool', () => {
     expect(exec).toHaveBeenCalledWith(
       '/mock/rg',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...MTIME_RG_ARGS,
       '-i',
       '--type',
       'ts',
@@ -822,7 +734,7 @@ describe('GrepTool', () => {
     expect(exec).toHaveBeenCalledWith(
       '/mock/rg',
       ...DEFAULT_RG_ARGS,
-      '-l',
+      ...MTIME_RG_ARGS,
       '--glob',
       '**/.env',
       ...SENSITIVE_RG_ARGS,

@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Speed up file completion in remote environments without ripgrep.
+Speed up remote file search and completion without per-file metadata requests.
