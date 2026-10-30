@@ -1779,6 +1779,35 @@ describe('WorkspaceFsService.grep', () => {
       now.mockRestore();
     }
   });
+
+  it('times out when the inventory deadline expires without discovering files', async () => {
+    const backend = fakeFs({ 'src/a.ts': 'hello\n' });
+    let clock = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    backend.walk = async () => {
+      clock += 30_000;
+      return { entries: [], errors: [], truncated: true, responseBytes: 64 };
+    };
+    try {
+      const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+
+      await expect(fs.grep({
+        pattern: 'hello',
+        regex: false,
+        case_sensitive: true,
+        follow_gitignore: false,
+        max_files: 200,
+        max_matches_per_file: 50,
+        max_total_matches: 5000,
+        context_lines: 0,
+      })).rejects.toMatchObject({
+        code: ErrorCodes.FS_GREP_TIMEOUT,
+        message: 'grep timed out after 30000ms',
+      });
+    } finally {
+      now.mockRestore();
+    }
+  });
 });
 
 describe('WorkspaceFsService.list', () => {
