@@ -10,6 +10,7 @@ export const HOST_WALK_MAX_DIRECTORIES = 10_000;
 export const HOST_WALK_MAX_ENTRIES = 100_000;
 export const HOST_WALK_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const HOST_WALK_MAX_IGNORE_BYTES = 1024 * 1024;
+export const HOST_WALK_DEFAULT_TIMEOUT_MS = 55_000;
 export const HOST_WALK_MAX_TIMEOUT_MS = 60_000;
 export const HOST_WALK_MAX_DIRECTORY_ENTRIES = 50_000;
 
@@ -48,12 +49,10 @@ export async function walkHostDirectory(
     message: error.message,
   }));
   const pathApi = hooks.path ?? { join, relative, separator: sep };
-  const timeout = options.timeoutMs === undefined ? undefined : AbortSignal.timeout(options.timeoutMs);
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? HOST_WALK_DEFAULT_TIMEOUT_MS);
   const signal = options.signal === undefined
     ? timeout
-    : timeout === undefined
-      ? options.signal
-      : AbortSignal.any([options.signal, timeout]);
+    : AbortSignal.any([options.signal, timeout]);
   const entries: HostDirEntry[] = [];
   const errors: { path: string; error: Error }[] = [];
   const pending = [{ path: root, depth: 0 }];

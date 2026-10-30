@@ -15,6 +15,7 @@ import {
   type FsWalkResult,
 } from '#/remote/protocol/methods';
 import {
+  HOST_WALK_DEFAULT_TIMEOUT_MS,
   HOST_WALK_MAX_DEPTH,
   HOST_WALK_MAX_DIRECTORIES,
   HOST_WALK_MAX_ENTRIES,
@@ -229,7 +230,7 @@ export class FsHandler {
         `ignore must not exceed ${HOST_WALK_MAX_IGNORE_BYTES} bytes when encoded as JSON`,
       );
     }
-    const timeoutMs = optionalInteger(params, 'timeoutMs', 1, HOST_WALK_MAX_TIMEOUT_MS);
+    const timeoutMs = optionalInteger(params, 'timeoutMs', 1, HOST_WALK_MAX_TIMEOUT_MS) ?? HOST_WALK_DEFAULT_TIMEOUT_MS;
     const result = await walkHostDirectory(this.fs, path, {
       maxDepth,
       maxDirectories,

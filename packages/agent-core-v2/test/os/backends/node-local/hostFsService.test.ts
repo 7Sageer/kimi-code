@@ -2,10 +2,10 @@ import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { walkHostDirectory } from '#/os/interface/hostFsWalk';
+import { HOST_WALK_DEFAULT_TIMEOUT_MS, walkHostDirectory } from '#/os/interface/hostFsWalk';
 
 let dir: string;
 let fs: HostFileSystem;
@@ -229,6 +229,33 @@ describe('HostFileSystem walk', () => {
     expect(cancelled.truncated).toBe(true);
     expect(afterTimeout.entries.map((entry) => entry.name)).toEqual(['/root/a']);
     expect(afterTimeout.truncated).toBe(true);
+  });
+
+  it('uses the default timeout below the RPC deadline', async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((delay) => {
+      expect(delay).toBe(HOST_WALK_DEFAULT_TIMEOUT_MS);
+      return controller.signal;
+    });
+    try {
+      const backend = {
+        readdir: async (path: string) => {
+          if (path === '/root') {
+            controller.abort();
+            return [{ name: 'a', isFile: false, isDirectory: true }];
+          }
+          return [{ name: 'file.ts', isFile: true, isDirectory: false }];
+        },
+      };
+
+      await expect(walkHostDirectory(backend, '/root', options)).resolves.toMatchObject({
+        entries: [],
+        truncated: true,
+      });
+      expect(timeout).toHaveBeenCalledOnce();
+    } finally {
+      timeout.mockRestore();
+    }
   });
 });
 
