@@ -12,6 +12,7 @@ node-local one rather than here:
 packages/agent-core-v2/src/
 ├── os/
 │   ├── interface/            IHostFileSystem / IHostProcessService contracts
+│   ├── operations/           DI-free file and search algorithms shared with the controller
 │   └── backends/
 │       ├── node-local/       direct node implementation (host, local environment, executor)
 │       └── remote/           RPC stubs over an ExecChannel (remoteFileSystem, remoteProcess)
@@ -19,13 +20,13 @@ packages/agent-core-v2/src/
     ├── protocol/             message types, error codes, NDJSON codec, ExecChannel (self-contained)
     ├── client/               execBridge, launchers, sshAskpass, connection, remoteSession,
     │                         remoteEnvironmentProvider, connectGuidance (executor detection + guidance)
-    ├── server/               stdioHost, fsHandler, processManager, environment, entry
+    ├── server/               stdioHost, fsHandler, fileOperationsHandler, searchHandler, processManager
     ├── declaration/          [environments] config schema
     └── askpass.ts            SSH_ASKPASS helper process (light entry, node builtins only)
 ```
 
-`os/backends/remote` may import only `#/remote/protocol`, `#/os/interface` and
-`#/_base`; the connection lifecycle that feeds it an `ExecChannel` stays in
+`os/backends/remote` may import only `#/remote/protocol`, `#/os/interface`,
+`#/os/operations` and `#/_base`; the connection lifecycle that feeds it an `ExecChannel` stays in
 `remote/client`.
 
 ## Entries
@@ -47,14 +48,14 @@ config/OAuth/telemetry/session services. Logs go to stderr; stdout carries
 protocol frames only. The light import graph is enforced by
 `scripts/check-import-boundaries.mjs`: `src/remote/server` may import only
 node builtins, relative modules, `#/remote/protocol`, `#/os/interface`,
-`#/_base/execEnv` and the DI-free node-local `hostFsService` /
+`#/os/operations`, `#/_base/execEnv` and the DI-free node-local `hostFsService` /
 `hostProcessService` modules (their App-scope registration lives in
 `os/backends/node-local/hostServices.ts`).
 
 ## Protocol notes (deviations from codex exec-server)
 
 Blueprint is codex exec-server (`codex-rs/exec-server*`, master `0265dd7b`);
-deviations per the design spec, plus one forced addition:
+deviations per the design spec and the shared host-operation extensions:
 
 - Bare absolute paths instead of `file:` URIs (our abstraction is bare-path
   end to end).
@@ -63,7 +64,14 @@ deviations per the design spec, plus one forced addition:
   without `maxBytes` are capped well below the 64MiB frame cap.
 - `fs/writeFile` takes `mode: truncate|append|exclusive` (codex only has
   truncate); `exclusive` maps EEXIST to `os.fs.already_exists`, which the
-  client maps back to `createExclusive === false`.
+  client maps back to `createExclusive === false`. Optional `parent` folds
+  directory preparation into the first write. Large transfers attach
+  `transferId`/`chunkIndex`/`final`; the client pipelines at most four 1MiB
+  chunks, and the executor sequences each transfer and stops after an error.
+  It tracks at most 64 transfers, expires idle transfers after 60 seconds,
+  and rejects duplicate or out-of-order chunks while a transfer is live.
+  Writes are never automatically retried, and connection loss may leave a
+  partial write or an uncertain mutation outcome.
 - `fs/readDirectory` preserves the symlink marker on each entry. The client
   rejects a truncated listing with `os.fs.directory_too_large` rather than
   exposing an incomplete directory; the current limit is 50,000 entries.
@@ -73,6 +81,34 @@ deviations per the design spec, plus one forced addition:
   back to per-directory reads when the JSON-encoded ignore rules exceed 1MiB.
   Walks default to a 55-second budget so they can return a truncated result
   before the 60-second RPC deadline.
+- `fs/readTextPage` performs sniffing, text decoding, line counting and page
+  rendering on the executor. It returns the same bounded output and exact
+  totals as local Read. Up to eight scans may run at once; `fs/cancelRead`
+  aborts an active scan. Requests above 4,000,000 output characters or above
+  the active-scan limit fall back to controller-side streaming, preserving
+  larger configured Read budgets and concurrent calls.
+- `fs/editText` applies the shared text-edit algorithm next to the file and
+  returns the replacement count or original edit error. It does not add an
+  atomic compare-and-swap guarantee against external writers.
+- `fs/snapshotFiles` reads and hashes up to four files of at most 4MiB each.
+  Matching known hashes omit the bytes; the controller retains durable
+  history blobs before a mutation. Content hints from writes and edits are
+  bounded to 16 files / 16MiB and reused only after a fresh remote content hash.
+- `fs/findGitWorkTree` and `fs/discoverInstructions` perform directory-chain
+  probes on the executor. Probe reuse is scoped to one instruction batch,
+  so a newly created Git marker or instruction file is visible on the next call.
+- `fs/matchFiles` scans batches of up to 128 already-selected files for the
+  workspace grep fallback. Responses above 8MiB request controller-side
+  matching so existing large match/context outputs remain available.
+- `process/search` runs the shared Glob/Grep algorithm on the executor and
+  returns the formatted page. The controller still resolves ripgrep and
+  handles permissions and telemetry. Up to eight searches may be active;
+  `process/cancelSearch` and disconnect abort their processes. More than 64
+  roots or eight concurrent searches use controller-side processing with the
+  original process RPC path. The existing
+  20-second timeout, retry, sorting, filtering and exact count semantics
+  remain; reaching the 10MiB stdout capture limit stops ripgrep early and
+  returns the existing partial-output diagnostics.
 - Added `fs/rename` (no codex counterpart).
 - `fs/remove` takes only `path` and always removes recursively and ignores a
   missing path, matching `IHostFileSystem.remove` (codex has `recursive`/`force`).
@@ -117,7 +153,9 @@ Client-surface notes beyond the wire protocol:
   and a late response is discarded — the connection survives. `process/write`
   is exempt: its response is deliberately suspended until the child's stdin
   drains, so it carries no timeout and is never retried — a hung write fails
-  only with the connection.
+  only with the connection. `fs/readTextPage` is also exempt so long scans
+  retain Read's existing behavior; explicit cancellation and connection
+  liveness remain in force.
 - Whole-file reads without `maxBytes` are rejected server-side above 32MiB
   (base64 of the response must fit the 64MiB frame cap); larger files are read
   through `offset`/`maxBytes` range reads.
@@ -180,6 +218,9 @@ handshake completes: any byte or unknown notification disconnects.
 
 ## Operational notes
 
+- Remote execution is experimental; client and executor must be upgraded
+  together. The new operation methods do not negotiate compatibility with
+  earlier development executors.
 - The executor is posix-only; the client refuses non-posix environments and
   executors below `MIN_EXECUTOR_VERSION` at the handshake gate.
 - `test/remote/e2e/` holds the real-machine (ssh/docker) acceptance driver and

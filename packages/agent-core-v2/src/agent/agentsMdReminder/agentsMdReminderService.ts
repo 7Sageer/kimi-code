@@ -9,7 +9,7 @@ import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { discoverInstructions } from '#/os/operations/instructions';
 import type { WatchChange } from '#human/utils/watch';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { acquireEnvironmentLease } from '#/agent/permissionPolicy/policies/environment-lease';
@@ -19,10 +19,6 @@ import { ISessionInstructionsProvider } from '#/session/sessionInstructions/inst
 import { normalizeUserPath } from '#/tool/path-access';
 import {
   AGENTS_MD_PLAIN_NAMES,
-  agentsMdCandidatePaths,
-  dirsRootToLeaf,
-  findAgentsMdInDir,
-  findProjectRoot,
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMdDetailed,
 } from '#/agent/profile/context';
@@ -190,13 +186,9 @@ export class AgentAgentsMdReminderService
       const { dirs, selfKnown } = this.targetDirs(ctx);
       const selfKnownSet = new Set(selfKnown);
       const discovered: string[] = [];
-      for (const dir of dirs) {
-        for (const path of await this.probeDir(dir)) {
-          if (this.known.has(path) || this.remindQueue.has(path) || selfKnownSet.has(path)) {
-            continue;
-          }
-          discovered.push(path);
-        }
+      for (const path of await this.probeDirs(dirs)) {
+        if (this.known.has(path) || this.remindQueue.has(path) || selfKnownSet.has(path)) continue;
+        discovered.push(path);
       }
       for (const path of selfKnown) {
         this.remindQueue.delete(path);
@@ -310,43 +302,20 @@ export class AgentAgentsMdReminderService
     return { dirs: [...new Set(dirs)], selfKnown: [...new Set(selfKnown)] };
   }
 
-  private async probeDir(dir: string): Promise<string[]> {
+  private async probeDirs(dirs: readonly string[]): Promise<readonly string[]> {
+    if (dirs.length === 0) return [];
     const lease = acquireEnvironmentLease(this.environment, ['fs']);
     if (lease === undefined) return [];
     try {
       const fs = lease.environment.fs!;
-      const anchor = await this.nearestExistingDir(fs, dir);
-      if (anchor === undefined) return [];
-      const deps = { fs };
-      const projectRoot = await findProjectRoot(deps, anchor);
-      const chain = dirsRootToLeaf(anchor, projectRoot);
-      const found: string[] = [];
-      for (const chainDir of chain) {
-        const candidates = agentsMdCandidatePaths(chainDir);
-        if (candidates.every((candidate) => this.known.has(normalize(candidate)))) continue;
-        for (const path of await findAgentsMdInDir(deps, chainDir)) {
-          found.push(normalize(path));
-        }
-      }
-      return found;
+      return await (fs.operations === undefined
+        ? discoverInstructions(fs, dirs, [...this.known])
+        : fs.operations.discoverInstructions(dirs, [...this.known]));
     } finally {
       lease.dispose();
     }
   }
 
-  private async nearestExistingDir(fs: IHostFileSystem, path: string): Promise<string | undefined> {
-    let current = path;
-    for (;;) {
-      const stat = await fs.stat(current).catch(() => undefined);
-      if (stat?.isDirectory === true) return current;
-      const parent = dirname(current);
-      if (parent === current) {
-        this.log.debug('agentsMdReminder probe found no existing anchor directory', { path });
-        return undefined;
-      }
-      current = parent;
-    }
-  }
 }
 
 function hostPath(path: string, pathClass: 'posix' | 'win32'): string {

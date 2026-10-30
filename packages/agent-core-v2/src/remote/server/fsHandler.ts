@@ -1,3 +1,4 @@
+import { ensureParentDirectory } from '#/os/operations/writeText';
 import { isAbsolute } from 'node:path';
 
 import type { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -6,6 +7,7 @@ import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErr
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
 import {
   FS_READ_DIRECTORY_MAX_ENTRIES,
+  FS_WRITE_FILE_CHUNK_BYTES,
   FS_READ_FILE_MAX_BYTES,
   FS_READ_FILE_WHOLE_MAX_BYTES,
   type FsCanonicalizeResult,
@@ -59,7 +61,7 @@ export function optionalBoolean(params: Params, name: string): boolean | undefin
   return value;
 }
 
-function optionalInteger(
+export function optionalInteger(
   params: Params,
   name: string,
   min: number,
@@ -99,7 +101,22 @@ function fsDomainError(error: unknown, ctx: { path: string; op: string }): RpcEr
 
 const EMPTY: Record<string, never> = {};
 
+interface WriteTransfer {
+  readonly path: string;
+  nextIndex: number;
+  final: boolean;
+  tail: Promise<unknown>;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class FsHandler {
+  private readonly writes = new Map<string, WriteTransfer>();
+
+  dispose(): void {
+    for (const transfer of this.writes.values()) clearTimeout(transfer.timer);
+    this.writes.clear();
+  }
+
   constructor(private readonly fs: HostFileSystem) {}
 
   async readFile(rawParams: unknown): Promise<FsReadFileResult> {
@@ -129,6 +146,40 @@ export class FsHandler {
 
   async writeFile(rawParams: unknown): Promise<typeof EMPTY> {
     const params = requireParams(rawParams);
+    const transferId = params['transferId'];
+    if (transferId === undefined) return this.writeChunk(params);
+    if (typeof transferId !== 'string' || transferId.length > 128 || transferId.length === 0) {
+      throw new RpcError(RpcErrorCode.InvalidParams, 'invalid write transfer ID');
+    }
+    const path = requireAbsolutePath(params, 'path');
+    const chunkIndex = optionalInteger(params, 'chunkIndex', 0, Number.MAX_SAFE_INTEGER);
+    const final = optionalBoolean(params, 'final') ?? false;
+    let transfer = this.writes.get(transferId);
+    if (transfer === undefined) {
+      if (chunkIndex !== 0 || this.writes.size >= 64) throw new RpcError(RpcErrorCode.InvalidRequest, 'unknown write transfer or too many active writes');
+      transfer = { path, nextIndex: 0, final: false, tail: Promise.resolve(), timer: setTimeout(() => this.writes.delete(transferId), 60_000).unref() };
+      this.writes.set(transferId, transfer);
+    }
+    if (transfer.final || transfer.path !== path || transfer.nextIndex !== chunkIndex || (chunkIndex !== 0 && (params['mode'] !== 'append' || params['parent'] !== undefined))) {
+      throw new RpcError(RpcErrorCode.InvalidRequest, 'write chunks must arrive once and in order for the same file');
+    }
+    transfer.nextIndex += 1;
+    transfer.final = final;
+    transfer.timer.refresh();
+    const run = transfer.tail.then(() => this.writeChunk(params));
+    transfer.tail = run;
+    try {
+      return await run;
+    } finally {
+      if (final) {
+        clearTimeout(transfer.timer);
+        this.writes.delete(transferId);
+      }
+    }
+  }
+
+  private async writeChunk(rawParams: unknown): Promise<typeof EMPTY> {
+    const params = requireParams(rawParams);
     const path = requireAbsolutePath(params, 'path');
     const dataBase64 = params['dataBase64'];
     if (typeof dataBase64 !== 'string') {
@@ -139,6 +190,12 @@ export class FsHandler {
       throw new RpcError(RpcErrorCode.InvalidParams, 'mode must be truncate, append or exclusive');
     }
     const data = Buffer.from(dataBase64, 'base64');
+    if (data.byteLength > FS_WRITE_FILE_CHUNK_BYTES) throw new RpcError(RpcErrorCode.InvalidParams, 'write chunk exceeds the byte limit');
+    if (params['parent'] !== undefined) {
+      const parent = requireAbsolutePath(params, 'parent');
+      const error = await ensureParentDirectory(this.fs, parent);
+      if (error !== undefined) throw new RpcError(RpcErrorCode.InvalidRequest, error);
+    }
     try {
       if (mode === 'truncate') {
         await this.fs.writeBytes(path, data);

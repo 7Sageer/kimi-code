@@ -6,7 +6,7 @@ import { type AgentTool } from '#/tool/toolContract';
 export const DEFAULT_MAX_CHARS = 100_000;
 export const DEFAULT_MAX_CHARS_LIMIT = 500_000;
 
-export const TRANSCODE_MAX_BYTES: number = 10 * 1024 * 1024;
+export { TRANSCODE_MAX_BYTES } from '#/os/operations/readTextPage';
 
 const PositiveLineOffsetSchema = z.number().int().min(1);
 const TailLineOffsetSchema = z.number().int().negative();

@@ -1,12 +1,7 @@
+import { renderTextStatus, TOOL_EMPTY_STATUS, TOOL_EMPTY_ERROR_STATUS, TOOL_ERROR_STATUS } from '#/_base/text/resultStatus';
 import type { ContentPart } from '#human/llm/message';
 
 import { isMcpToolName } from '#/tool/toolContract';
-
-const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-const TOOL_EMPTY_ERROR_STATUS =
-  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
-const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 
 export interface RenderableToolResult {
   readonly output: string | readonly ContentPart[];
@@ -52,11 +47,7 @@ function renderStatus(result: RenderableToolResult): ContentPart[] {
   const output = result.output;
   const single = typeof output === 'string' ? output : singleTextPart(output);
   if (single !== undefined) {
-    if (result.isError === true) {
-      if (single.length === 0) return [textPart(TOOL_EMPTY_ERROR_STATUS)];
-      return [textPart(TOOL_ERROR_STATUS + '\n' + single)];
-    }
-    return isEmptyOutputText(single) ? [textPart(TOOL_EMPTY_STATUS)] : [textPart(single)];
+    return [textPart(renderTextStatus(single, result.isError))];
   }
 
   const parts = output as readonly ContentPart[];
@@ -74,10 +65,6 @@ function singleTextPart(output: readonly ContentPart[]): string | undefined {
 
 function textPart(text: string): ContentPart {
   return { type: 'text', text };
-}
-
-function isEmptyOutputText(output: string): boolean {
-  return output.trim().length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
 }
 
 function isEmptyEquivalentContentArray(output: readonly ContentPart[]): boolean {

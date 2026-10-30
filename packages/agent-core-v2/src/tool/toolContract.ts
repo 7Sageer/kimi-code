@@ -1,18 +1,11 @@
+import type { ToolResultSpill } from '#/_base/text/outputLimits';
 import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ExecutableToolOutput = string | ContentPart[];
 
-export const DEFAULT_TOOL_RESULT_MAX_CHARS = 50_000;
-
-export const DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS = 10_000_000;
-
-export interface ToolResultSpill {
-  readonly outputPath?: string;
-  readonly totalChars?: number;
-  readonly suffix?: string;
-}
+export { DEFAULT_TOOL_RESULT_MAX_CHARS, DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS, type ToolResultSpill } from '#/_base/text/outputLimits';
 
 export type ToolDeliveryKind = 'steer';
 

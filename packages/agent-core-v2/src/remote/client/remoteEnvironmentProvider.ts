@@ -51,6 +51,15 @@ class DeclaredRemoteEnvironment implements Environment {
   private connectedAt = 0;
   readonly fs: IHostFileSystem = {
     _serviceBrand: undefined,
+    operations: {
+      matchFiles: async (files, options, timeoutMs) => this.connected().fs.operations.matchFiles(files, options, timeoutMs),
+      findGitWorkTree: async (cwd) => this.connected().fs.operations.findGitWorkTree(cwd),
+      discoverInstructions: async (dirs, known) => this.connected().fs.operations.discoverInstructions(dirs, known),
+      snapshotFiles: async (files, maxFileBytes) => this.connected().fs.operations.snapshotFiles(files, maxFileBytes),
+      writeText: async (input) => this.connected().fs.operations.writeText(input),
+      readTextPage: async (path, options, signal) => this.connected().fs.operations.readTextPage(path, options, signal),
+      editText: async (input) => this.connected().fs.operations.editText(input),
+    },
     readText: async (path, options) => this.connected().fs.readText(path, options),
     writeText: async (path, data) => this.connected().fs.writeText(path, data),
     appendText: async (path, data) => this.connected().fs.appendText(path, data),
@@ -69,6 +78,7 @@ class DeclaredRemoteEnvironment implements Environment {
   };
   readonly process: IHostProcessService = {
     _serviceBrand: undefined,
+    search: async (request, signal) => this.connected().process.search(request, signal),
     spawn: async (command, args, options) => this.connected().process.spawn(command, args, options),
   };
 

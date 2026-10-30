@@ -12,11 +12,13 @@ const LOOP_MACHINE_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop/machine');
 const SESSION_LIFECYCLE_ADAPTER_ROOT = join(SRC_ROOT, 'session/agentLifecycle');
 const REMOTE_SERVER_ROOT = join(SRC_ROOT, 'remote/server');
 const REMOTE_SERVER_ALLOWED_RE =
-  /^#\/(?:(?:remote\/protocol|os\/interface|_base\/execEnv)(?:\/|$)|os\/backends\/node-local\/(?:hostFsService|hostProcessService)$)/;
+  /^#\/(?:(?:remote\/protocol|os\/interface|os\/operations|_base\/execEnv)(?:\/|$)|os\/backends\/node-local\/(?:hostFsService|hostProcessService)$)/;
 const REMOTE_SERVER_MODULE_RE = /\/remote\/server(?:\/|$)/;
 const REMOTE_ASKPASS_FILE = join(SRC_ROOT, 'remote/askpass.ts');
+const OS_OPERATIONS_ROOT = join(SRC_ROOT, 'os/operations');
+const OS_OPERATIONS_ALLOWED_RE = /^#\/(?:os\/(?:interface|operations)|_base\/(?:execEnv|errors|text|media|fs))(?:\/|$)/;
 const OS_REMOTE_BACKEND_ROOT = join(SRC_ROOT, 'os/backends/remote');
-const OS_REMOTE_BACKEND_ALLOWED_RE = /^#\/(?:remote\/protocol|os\/interface|_base)(?:\/|$)/;
+const OS_REMOTE_BACKEND_ALLOWED_RE = /^#\/(?:remote\/protocol|os\/interface|os\/operations|_base)(?:\/|$)/;
 const ENVIRONMENT_ROOT = join(SRC_ROOT, 'environment');
 const REMOTE_ROOT = join(SRC_ROOT, 'remote');
 const REMOTE_DECLARATION_ROOT = join(SRC_ROOT, 'remote/declaration');
@@ -39,7 +41,7 @@ function remoteServerViolation(absFile, specifier) {
   if (!isInside(REMOTE_SERVER_ROOT, absFile)) return undefined;
   if (specifier.startsWith('.') || specifier.startsWith('node:')) return undefined;
   if (REMOTE_SERVER_ALLOWED_RE.test(specifier)) return undefined;
-  return `the remote executor stays light: src/remote/server may import only node builtins, relative modules, #/remote/protocol, #/os/interface, #/_base/execEnv and the node-local hostFsService / hostProcessService implementations ('${specifier}')`;
+  return `the remote executor stays light: src/remote/server may import only node builtins, relative modules, #/remote/protocol, #/os/interface, #/os/operations, #/_base/execEnv and the node-local hostFsService / hostProcessService implementations ('${specifier}')`;
 }
 
 function remoteAskpassViolation(absFile, specifier) {
@@ -51,7 +53,7 @@ function osRemoteBackendViolation(absFile, specifier) {
   if (!isInside(OS_REMOTE_BACKEND_ROOT, absFile)) return undefined;
   if (specifier.startsWith('.') || specifier.startsWith('node:')) return undefined;
   if (OS_REMOTE_BACKEND_ALLOWED_RE.test(specifier)) return undefined;
-  return `the remote os backend is a sibling of node-local: src/os/backends/remote may import only node builtins, relative modules, #/remote/protocol, #/os/interface and #/_base ('${specifier}') — the transport and environment wiring live in src/remote/client`;
+  return `the remote os backend is a sibling of node-local: src/os/backends/remote may import only node builtins, relative modules, #/remote/protocol, #/os/interface, #/os/operations and #/_base ('${specifier}') — the transport and environment wiring live in src/remote/client`;
 }
 
 function remoteServerConsumerViolation(absFile, specifier) {
@@ -182,6 +184,10 @@ export function checkSource(source, absFile) {
 
     if (!inSrc) continue;
 
+    if (isInside(OS_OPERATIONS_ROOT, absFile) && !specifier.startsWith('node:') && !specifier.startsWith('./') && specifier !== 'pathe' && !OS_OPERATIONS_ALLOWED_RE.test(specifier)) {
+      violations.push({ file: absFile, line, message: `shared host operations stay DI-free and cannot import engine or transport modules ('${specifier}')` });
+      continue;
+    }
     const remoteServer = remoteServerViolation(absFile, specifier);
     if (remoteServer !== undefined) {
       violations.push({ file: absFile, line, message: remoteServer });

@@ -1,4 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { HostFileOperations } from './fileOperations';
 import type { TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 export interface HostFileStat {
@@ -41,6 +42,8 @@ export interface HostWalkResult {
 
 export interface IHostFileSystem {
   readonly _serviceBrand: undefined;
+
+  readonly operations?: HostFileOperations;
 
   readText(
     path: string,

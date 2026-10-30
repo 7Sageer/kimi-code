@@ -1,6 +1,22 @@
 export const INITIALIZE_METHOD = 'initialize';
 export const PING_METHOD = 'ping';
 
+export const FS_FIND_GIT_WORK_TREE_METHOD = 'fs/findGitWorkTree';
+export const FS_DISCOVER_INSTRUCTIONS_METHOD = 'fs/discoverInstructions';
+
+export const FS_MATCH_FILES_METHOD = 'fs/matchFiles';
+export const FS_SNAPSHOT_FILES_METHOD = 'fs/snapshotFiles';
+export const FS_SNAPSHOT_MAX_FILES = 4;
+export const FS_SNAPSHOT_MAX_FILE_BYTES = 4 * 1024 * 1024;
+
+export const FS_MAX_ACTIVE_READS = 8;
+export const PROCESS_MAX_ACTIVE_SEARCHES = 8;
+export const PROCESS_SEARCH_MAX_ROOTS = 64;
+
+export const FS_CANCEL_READ_METHOD = 'fs/cancelRead';
+export const FS_READ_TEXT_PAGE_METHOD = 'fs/readTextPage';
+export const FS_EDIT_TEXT_METHOD = 'fs/editText';
+
 export const FS_READ_FILE_METHOD = 'fs/readFile';
 export const FS_WRITE_FILE_METHOD = 'fs/writeFile';
 export const FS_CREATE_DIRECTORY_METHOD = 'fs/createDirectory';
@@ -10,6 +26,9 @@ export const FS_READ_DIRECTORY_METHOD = 'fs/readDirectory';
 export const FS_WALK_METHOD = 'fs/walk';
 export const FS_REMOVE_METHOD = 'fs/remove';
 export const FS_RENAME_METHOD = 'fs/rename';
+
+export const PROCESS_SEARCH_METHOD = 'process/search';
+export const PROCESS_CANCEL_SEARCH_METHOD = 'process/cancelSearch';
 
 export const PROCESS_START_METHOD = 'process/start';
 export const PROCESS_OUTPUT_METHOD = 'process/output';
@@ -64,6 +83,10 @@ export interface FsWriteFileParams {
   readonly path: string;
   readonly dataBase64: string;
   readonly mode: FsWriteMode;
+  readonly parent?: string;
+  readonly transferId?: string;
+  readonly chunkIndex?: number;
+  readonly final?: boolean;
 }
 
 export interface FsCreateDirectoryParams {

@@ -144,6 +144,17 @@ describe('request call timeout', () => {
     connection.close();
   });
 
+  it('lets cancellable text scans outlive the per-call transport timeout', async () => {
+    const pipe = createScriptedServer((frame, reply) => {
+      if (frame.method === INITIALIZE_METHOD) reply({ id: frame.id, result: testInitializeResult() });
+      else if (frame.method === 'fs/readTextPage') setTimeout(() => { reply({ id: frame.id, result: { output: 'complete' } }); }, 80);
+    });
+    const connection = await RemoteExecConnection.connect(pipe, { clientName: 'test', clientVersion: '0.0.0', requestCallTimeoutMs: 20 });
+    try {
+      await expect(connection.call('fs/readTextPage', {})).resolves.toEqual({ output: 'complete' });
+    } finally { connection.close(); }
+  });
+
   it('cancels a process start that timed out, so the late spawn cannot go orphan', async () => {
     const seen: ScriptedFrame[] = [];
     const pipe = createScriptedServer((frame, reply) => {

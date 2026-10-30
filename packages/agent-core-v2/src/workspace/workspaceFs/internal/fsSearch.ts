@@ -1,6 +1,6 @@
 import picomatch from 'picomatch';
 
-import type { FsGrepRequest } from '../fs';
+export { compileGrepPattern } from '#/os/operations/matchFiles';
 
 export function computeFuzzyScore(name: string, queryLower: string): number {
   if (queryLower.length === 0) return 0;
@@ -81,16 +81,6 @@ function globSegmentsMatchPrefix(globSegments: readonly string[], relSegments: r
     }
   }
   return dp[0] === 1;
-}
-
-export function compileGrepPattern(req: FsGrepRequest): RegExp {
-  const flags = req.case_sensitive ? 'g' : 'gi';
-  const body = req.regex ? req.pattern : escapeRegExp(req.pattern);
-  return new RegExp(body, flags);
-}
-
-function escapeRegExp(s: string): string {
-  return s.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function stripTrailingNewline(s: string): string {

@@ -1,3 +1,4 @@
+import type { SearchRequest, SearchResult } from './searchOperations';
 import type { Readable, Writable } from 'node:stream';
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
@@ -27,8 +28,11 @@ export interface IHostProcess {
   dispose(): void | Promise<void>;
 }
 
+
 export interface IHostProcessService {
   readonly _serviceBrand: undefined;
+
+  search?(request: SearchRequest, signal: AbortSignal): Promise<SearchResult>;
 
   spawn(
     command: string,
